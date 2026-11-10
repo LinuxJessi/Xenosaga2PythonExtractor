@@ -57,15 +57,27 @@ Jan 2004; 2026-11-05): the same file version (+0x04 = 1) and opcodes, but no
 .sbl yet. A ``pushtext`` operand is then the byte offset of a NUL-terminated
 EUC-JP string inside the script's own globals section (5,053 of 5,053 land
 on a string start; 5,049 decode as EUC-JP), so dialogue, debug prints and
-effect names all live in the .sb. A few demo headers leave the source-name
+effect names all live in the .sb. The Japanese retail discs (SLPS_253.68/.69)
+are built the same way. Not every string is named by a pushtext: the globals
+before the pool are 32-bit variable slots, and some hold the pool offset of a
+string as their initial value (tutorial pages in think002/think003 and
+E2_KML03/E2_KML04, lists in cf\\sc1610). ``Script.pointer_slots`` finds
+them: on Japan Disc 1, 203 slots in 19 scripts name 186 strings, 172 of which
+no pushtext names; with them every one of the pool's strings is accounted for
+(17,225 = 17,053 by pushtext + 172; no string in any pool is left over). A few demo headers leave the source-name
 offset at 0 (no name). ``Script.text_kind`` says which form a script uses.
 
 File layout::
 
     +0x00 "SB  "  +0x04 u32 1  +0x08 u32 ?  +0x0C u32 entries  +0x10 u32 imports
-    +0x14 code  +0x18 globals  +0x1C (.sbl pointer at run time)  +0x20 entry table
+    +0x14 code  +0x18 globals  +0x1C text pool (see below)  +0x20 entry table
     +0x24 import table  +0x28 source name (e.g. "nakahara\\sc1010", the author's folder;
                         0 = none, seen only in the demo)
+    +0x1C       : retail USA: equals the entry-table offset in the file and is
+                  overwritten with the loaded .sbl's address at run time
+                  (``FUN_00a9f238``). Japan and the demo: the file offset of
+                  the first string of the text pool, i.e. globals offset +
+                  ``Script.pool_offset`` (592 of 592 Japanese scripts)
     entry table : entries x {u32 name offset, u32 code word}, then the names
     import table: imports x {u16 function name offset, u16 class name offset},
                   offsets into the string pool that follows the table
@@ -141,6 +153,45 @@ class Script:
         return g[operand:g.index(b"\x00", operand)]
 
     @property
+    def pool_offset(self) -> int:
+        """Where the inline text pool starts inside the globals (header +0x1C minus the
+        globals offset). The slots before it are variables; from here on, strings.
+        Equal to ``len(globals_)`` in a retail USA script (no pool)."""
+        return max(0, min(len(self.globals_), self.header[7] - self.header[6])) if len(self.header) > 7 else 0
+
+    def pool_strings(self) -> List[int]:
+        """Offsets of every non-empty NUL-terminated string in the text pool."""
+        g, out, q = self.globals_, [], self.pool_offset
+        while q < len(g):
+            if g[q] == 0:
+                q += 1
+                continue
+            end = g.find(b"\x00", q)
+            if end < 0:
+                break
+            out.append(q)
+            q = end + 1
+        return out
+
+    def pointer_slots(self) -> List[Tuple[int, int]]:
+        """(slot number, string offset) for every variable slot before the pool whose
+        initial value is the offset of a pool string: strings reached through a table,
+        not through a pushtext."""
+        starts = set(self.pool_strings())
+        if not starts:
+            return []
+        n = self.pool_offset // 4
+        return [(k, v) for k, v in enumerate(struct.unpack_from(f"<{n}I", self.globals_, 0)) if v in starts]
+
+    def text_offsets(self) -> List[Tuple[int, str]]:
+        """(offset, how) of every inline string: 'push' when a pushtext names it,
+        'table' when only a pointer slot does. In offset order."""
+        push = {i.operand for i in disassemble(self.code)
+                if i.op == 0x06 and (i.operand >> 16) != TEXT_TAG and self.inline_text(i.operand) is not None}
+        table = {v for _, v in self.pointer_slots()} - push
+        return sorted([(o, "push") for o in push] + [(o, "table") for o in table])
+
+    @property
     def text_kind(self) -> str:
         """'sbl' (pushtext = .sbl line, retail), 'inline' (pushtext = globals string,
         the demo), 'none' (no pushtext) or 'mixed'."""
@@ -162,8 +213,10 @@ class Script:
 
 
 def decode_inline(raw: bytes) -> str:
-    """A demo inline string: EUC-JP, falling back to Shift-JIS, then latin-1."""
-    for enc in ("euc_jp", "shift_jis"):
+    """A demo inline string: EUC-JP (the kit codec, sbl.CODEC), falling back to
+    Shift-JIS, then latin-1."""
+    import sbl
+    for enc in (sbl.CODEC, "shift_jis"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:
@@ -401,6 +454,17 @@ def self_test() -> int:
     check_(d.source == "" and d.text_kind == "inline", "a demo script: no source name, inline text")
     check_(check(d) == [] and d.inline_strings() == [(10, "勝利者")], "an inline string passes and decodes")
     check_('str@0xa' in listing(d) and "勝利者" in listing(d), "the listing shows the inline string")
+    # a pointer table: two variable slots whose initial values are pool offsets; the
+    # pushtext names only the first string, the table reaches the second
+    pool = b"first\x00\x00\x00" + b"second\x00\x00"
+    g2 = struct.pack("<4I", 7, 16, 24, 0) + pool
+    pt = bytearray(build(struct.pack("<HHH", 0x06, 16, 0) + struct.pack("<H", 0x2A) + struct.pack("<H", 0x1D), g2))
+    struct.pack_into("<I", pt, 0x1C, struct.unpack_from("<I", pt, 0x18)[0] + 16)
+    t = parse(bytes(pt))
+    check_(t.pool_offset == 16 and t.pool_strings() == [16, 24], "the text pool starts at header +0x1C")
+    check_(t.pointer_slots() == [(1, 16), (2, 24)], "variable slots that point into the pool")
+    check_(t.text_offsets() == [(16, "push"), (24, "table")], "a string only a table reaches is listed")
+    check_(parse(build(call, struct.pack("<II", 0, 7))).text_offsets() == [], "a retail script has no inline text")
     mid = parse(build(struct.pack("<HHH", 0x06, 3, 0) + struct.pack("<H", 0x1D), glob))
     check_(any("pushtext" in p for p in check(mid)), "a pushtext into the middle of a string is caught")
     s2 = parse(build(call, struct.pack("<II", 0, 7)))

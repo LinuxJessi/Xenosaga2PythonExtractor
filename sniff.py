@@ -48,6 +48,8 @@ PATHS = {
     "yajima\\title.bin": "rgba-image",  # title logo, 512x448 RGBA ("DISC 1")
     "yajima\\title2.bin": "rgba-image",  # the same for "DISC 2"
     "yamamoto\\batdat.us": "battle-db",  # names and descriptions of skills, items, enemies
+    "yamamoto\\batdat.bin": "battle-db",  # the same, Japan (EUC-JP)
+    "carddata.new": "pack",             # Japan: icon.sys + three .ico
 }
 
 
@@ -61,7 +63,7 @@ def sniff(head: bytes, path: str = "") -> str:
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     if head[:2] == b"\x80\x00" and ext == "adx":
         return "adx"
-    if ext == "us" and key.startswith("font"):
+    if ext in ("us", "tex") and key.startswith("font"):     # font0.us (USA), font0.tex (Japan)
         return "font"
     if ext in ("txt",):
         return "text"

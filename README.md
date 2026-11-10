@@ -59,6 +59,17 @@ scripts are the older form with their (Japanese, EUC-JP) text inside the `.sb` i
 of an `.sbl`, which `sb` shows inline and `natives --out` writes to `strings.tsv`
 ([docs/SCRIPTS.md](docs/SCRIPTS.md)).
 
+**Regions.** The kit reads the build from the disc's boot executable (`region.py`):
+
+| | USA (SLUS_208.92 Disc 1, SLUS_211.33 Disc 2) | Japan (SLPS_253.68 / .69) and the demo |
+|---|---|---|
+| Dialogue | `.sbl` banks under `en\`; `text-import` rebuilds a bank | inside the `.sb`; `text-import` edits in place, same length or shorter |
+| Movie subtitles | `movie\en\*.txt` | `movie\*.txt` |
+| Fonts | `font0.us`, `font1.us` | `font0.tex`, `font1.tex` |
+| Battle database | `yamamoto\batdat.us` | `yamamoto\batdat.bin` |
+
+Give Disc 1 and Disc 2 of the same region; a mixed pair gets a warning.
+
 Prefer a window? `python gui.py` (or double-click `launch.command` on a Mac,
 `launch.bat` on Windows, `launch.sh` on Linux) opens a local page with a card
 per command; the cards are built from the CLI itself, so new commands appear

@@ -201,7 +201,8 @@ def decode_text_file(b: bytes) -> str:
     """EUC-JP or Shift-JIS, whichever decodes cleanly with fewer half-width
     kana (the mojibake tell); Latin-1 as the last resort."""
     best = None
-    for enc in ("euc_jp", "shift_jis"):
+    import sbl
+    for enc in (sbl.CODEC, "shift_jis"):
         try:
             t = b.decode(enc)
         except UnicodeDecodeError:
@@ -259,9 +260,8 @@ def browse_scripts(out: Path, rows, limit) -> None:
     for r in rows:
         if r["kind"] != "sb":
             continue
-        head, _, name = r["path"].rpartition("\\")
-        stem = name.rsplit(".", 1)[0]
-        bank = by_path.get(f"{head}\\en\\{stem}.sbl".lower())
+        import region
+        bank = by_path.get(region.bank_path(r["path"]).lower())   # None on Japan: inline text
         try:
             s = sb.parse(_src(out, r).read_bytes())
             strings = sbl.parse(_src(out, bank).read_bytes()) if bank else None

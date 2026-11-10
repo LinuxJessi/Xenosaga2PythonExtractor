@@ -75,6 +75,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import sb    # noqa: E402
 import sbl   # noqa: E402
+import region  # noqa: E402
 
 FPS = 30                         # subtitle and event frames (BE6302: frame 600 = 20.0 s of a 20.76 s track)
 RATE = 48000                     # ADX tracks and the movies' ADX streams are 48 kHz stereo
@@ -152,7 +153,8 @@ def _value_of(v) -> Tuple[str, object]:
     if not isinstance(v, sb.Insn):
         return ("?", None)
     if v.op == 0x06:
-        return ("text", v.operand & 0xFFFF)
+        # retail USA: 0x20 << 16 | .sbl line; Japan and the demo: a byte offset into the globals
+        return ("text", v.operand & 0xFFFF if (v.operand >> 16) == sb.TEXT_TAG else v.operand)
     if v.op == 0x04:
         return ("int", sb._signed(v.operand))
     if v.op in sb.CONST_OPS:
@@ -328,7 +330,12 @@ def script_lines(script: sb.Script, strings: List[bytes], scene: str,
         texts = [(k, v) for k, (kind, v) in enumerate(args) if kind == "text"]
 
         def s(idx):
-            return sbl.to_text(strings[idx]) if isinstance(idx, int) and idx < len(strings) else ""
+            if not isinstance(idx, int):
+                return ""
+            if strings:
+                return sbl.to_text(strings[idx]) if idx < len(strings) else ""
+            raw = script.inline_text(idx)          # Japan / demo: the string is in the .sb
+            return sbl.to_text(raw) if raw is not None else ""
 
         ints = [v if kind == "int" else None for kind, v in args]
         ln = Line(source="battle" if battle else "script", scene=scene, order=0,
@@ -435,7 +442,7 @@ def parse_subtitles(data: bytes) -> List[Tuple[float, float, str]]:
 
     Times are ``mm:ss:ff`` (ff at 30 fps), a frame count, or ``+N`` frames
     after the previous cue. Comment lines start with ``;``; ``end`` closes."""
-    text = data.decode("euc_jp", "replace")
+    text = data.decode(sbl.CODEC, "replace")
     events: List[Tuple[float, str]] = []
     last = 0.0
     for raw in text.splitlines():
@@ -490,8 +497,9 @@ class Disc:
         from iso9660 import IsoImage
         from toc import parse_toc
         self.chains: Dict[int, Tuple[object, Dict[str, object]]] = {}
-        for p in isos:
-            iso = IsoImage(p)
+        images = [IsoImage(p) for p in isos]
+        self.mixed = region.warn_mixed(images)     # Japan Disc 1 + USA Disc 2, say
+        for iso in images:
             for c in available_chains(iso):
                 if c in self.chains:
                     continue
@@ -661,9 +669,8 @@ def _scene_scripts(disc: Disc) -> Iterator[Tuple[str, str, bool, int, object, Op
         is_battle = low.startswith("model\\map\\") and low.endswith(".bin") and low.count("\\") == 2
         if not (is_scene or is_battle):
             continue
-        head, _, name = path.rpartition("\\")
-        stem = name.rsplit(".", 1)[0]
-        bank = disc.find(f"{head}\\en\\{stem}.sbl")
+        stem = path.rpartition("\\")[2].rsplit(".", 1)[0]
+        bank = disc.find(region.bank_path(path))     # None on Japan: inline text
         hit = disc.find(path)
         yield stem, path, is_battle, hit[0], hit[1], bank
 
@@ -699,7 +706,7 @@ def run(isos: List[str], out: Path, voice: bool = False, only: Optional[List[str
     movies: Dict[str, Tuple[int, object, List[Line]]] = {}
     for c, path in disc.paths():
         low = path.lower()
-        if low.startswith("movie\\en\\") and low.endswith(".txt"):
+        if region.is_movie_subtitle(low):
             stem = path.rsplit("\\", 1)[1][:-4]
             if only and not any(o.lower() in stem.lower() for o in only):
                 continue
@@ -707,7 +714,7 @@ def run(isos: List[str], out: Path, voice: bool = False, only: Optional[List[str
             cues = parse_subtitles(disc.read(*hit))
             (out / "subtitles" / f"{stem}.srt").write_text(srt(cues), encoding="utf-8")
             lines = [Line(source="movie", scene=stem, order=n, speaker="", text=clean(t),
-                          native="movie\\en", start=a, end=b, raw=t,
+                          native=path.rpartition("\\")[0], start=a, end=b, raw=t,
                           voice=f"movie\\{stem}.sfd")
                      for n, (a, b, t) in enumerate(cues)]
             mv = disc.find(f"movie\\{stem}.sfd")

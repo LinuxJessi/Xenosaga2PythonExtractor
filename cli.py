@@ -44,6 +44,7 @@ from chains import CHAINS, ChainReader, available_chains, disc_number  # noqa: E
 from iso9660 import BOOT_RE, IsoImage                                    # noqa: E402
 from sniff import sniff                                                  # noqa: E402
 from toc import parse_toc                                                # noqa: E402
+import region                                                            # noqa: E402
 
 MANIFEST_FIELDS = ["area", "path", "sector", "size", "compressed", "usize", "sha1",
                    "kind", "disc", "bigfile", "bigfile_offset"]
@@ -57,8 +58,9 @@ def _entries(iso: IsoImage, chain: int):
 def _sources(isos):
     """chain -> IsoImage, taking each chain from the first image that has it."""
     have = {}
-    for path in isos:
-        iso = IsoImage(path)
+    images = [IsoImage(path) for path in isos]
+    region.warn_mixed(images)            # Japan Disc 1 + USA Disc 2, say
+    for iso in images:
         for c in available_chains(iso):
             have.setdefault(c, iso)
     return have
@@ -198,8 +200,7 @@ def cmd_sb(args) -> int:
         if e is None:
             continue
         s = sb.parse(reader.read(e.byte_offset, e.size))
-        head, _, name = e.path.rpartition("\\")
-        bank = byp.get(f"{head}\\en\\{name.rsplit('.', 1)[0]}.sbl".lower())
+        bank = byp.get(region.bank_path(e.path).lower())   # None on Japan: inline text
         strings = sbl.parse(reader.read(bank.byte_offset, bank.size)) if bank else None
         print(sb.listing(s, strings))
         return 0
@@ -309,7 +310,7 @@ def cmd_patch(args) -> int:
     return 0
 
 
-SELF_TESTS = ("toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
+SELF_TESTS = ("region", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue")
 
 

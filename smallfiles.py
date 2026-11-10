@@ -198,23 +198,36 @@ def _cstr(seg: bytes, o: int) -> bytes:
     return seg[o:e if e >= 0 else len(seg)]
 
 
+def _is_euc(raw: bytes) -> bool:
+    import sbl
+    if not any(b > 0x7F for b in raw):
+        return False
+    try:
+        raw.decode(sbl.CODEC)
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
 def batdat_strings(data: bytes) -> List[Tuple[int, int, str]]:
     """(section, offset in section, text) for every string the sections point
     to: records whose first two u16 point into the section's string pool, and
     the plain offset list of the last section."""
+    import sbl
     out = []
     for si, (a, b) in enumerate(batdat_sections(data)):
         seg = data[a:b]
         if len(seg) < 4:
             continue
         pool = struct.unpack_from("<H", seg, 0)[0]       # the first record's first string
-        if not (4 <= pool < len(seg)) or not 0x20 <= seg[pool] < 0x7F:
+        if not (4 <= pool < len(seg)) or not (0x20 <= seg[pool] < 0x7F or 0xA1 <= seg[pool] <= 0xFE):
             continue                                     # a numbers-only section
         words = struct.unpack_from(f"<{pool // 2}H", seg, 0)
         refs = {w for w in words if pool <= w < len(seg) and seg[w] != 0
                 and (w == pool or seg[w - 1] == 0)}
         for o in sorted(refs):
-            out.append((si, o, _cstr(seg, o).decode("latin1")))
+            raw = _cstr(seg, o)        # ASCII on the USA disc, EUC-JP on the Japanese one
+            out.append((si, o, raw.decode(sbl.CODEC) if _is_euc(raw) else raw.decode("latin1")))
     return out
 
 
@@ -228,7 +241,7 @@ def describe(path: str, data: bytes) -> str:
     try:
         if name.endswith(("title.bin", "title2.bin")):
             return f"title logo, raw {TITLE_W}x{TITLE_H} RGBA"
-        if name.endswith("batdat.us"):
+        if name.endswith(("batdat.us", "batdat.bin")):
             secs = batdat_sections(data)
             return f"battle database: {len(secs)} sections, {len(batdat_strings(data))} strings"
         m = pack_members(data)
@@ -271,7 +284,7 @@ def extract(path: str, data: bytes, out: Path) -> List[str]:
         p = out / f"{stem}.png"
         p.write_bytes(png_bytes(TITLE_W, TITLE_H, rgba_image(data)))
         return [str(p)]
-    if name.endswith("batdat.us"):
+    if name.endswith(("batdat.us", "batdat.bin")):
         import csv
         p = out / f"{stem}.strings.csv"
         with open(p, "w", newline="", encoding="utf-8") as fh:
@@ -310,7 +323,8 @@ def extract(path: str, data: bytes, out: Path) -> List[str]:
 
 
 SMALL_FILES = ("credit.bin", "carddata.bin", "yajima\\im.bin", "yajima\\synopsis.bin",
-               "yajima\\titlebg2.bin", "yajima\\title.bin", "yajima\\title2.bin", "yamamoto\\batdat.us")
+               "yajima\\titlebg2.bin", "yajima\\title.bin", "yajima\\title2.bin", "yamamoto\\batdat.us",
+               "yamamoto\\batdat.bin", "carddata.new")
 
 
 def browse_small(out: Path, rows, limit) -> None:

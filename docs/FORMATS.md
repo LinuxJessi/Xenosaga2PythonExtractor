@@ -173,7 +173,8 @@ set, literal kinds (ops 03/04/06/07) and argument types are in
 File layout:
 
     +0x00 "SB  "  +0x04 1  +0x08 0  +0x0C entry count  +0x10 import count
-    +0x14 code  +0x18 globals  +0x1C (empty)  +0x20 entry table  +0x24 import table
+    +0x14 code  +0x18 globals  +0x1C text pool (USA: = entry table; Japan/demo:
+    first inline string, see SCRIPTS.md)  +0x20 entry table  +0x24 import table
     +0x28 source name ("nakahara\sc1010": author folder and script)
     entries: {u32 name offset, u32 code word}     e.g. locater, kowaremono, goteinei, mapjump
     imports: {u16 function offset, u16 class offset} into the string pool after the table

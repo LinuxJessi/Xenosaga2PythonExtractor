@@ -21,6 +21,18 @@ developer notes. The editable form (``to_text``) shows EUC-JP as text and any
 byte run that does not survive a decode/encode round trip as ``⟦XX⟧`` hex,
 so ``from_text(to_text(s)) == s`` for every string on the disc.
 
+The codec is Python's ``euc_jis_2004`` (``CODEC``), chosen on evidence
+(2026-11-10): over all 94 x 94 two-byte codes the two codecs never decode one
+code to different characters (6,879 codes are defined in both, 1,918 only in
+euc_jis_2004, 0 only in euc_jp), so no existing text changes; what
+euc_jis_2004 adds on the discs is JIS row 13 (lead byte 0xAD: ①..⑳, Ⅰ..Ⅹ),
+which the game's font draws (``font.py``) and the Japanese text uses in 73 of
+19,212 strings (inline scripts, batdat.bin, .txd). Every non-ASCII Japanese
+string (15,536) decodes strictly and re-encodes to the same bytes under
+euc_jis_2004; under euc_jp those 73 fail. The USA strings read the same under
+both. The price: euc_jis_2004 will also *encode* characters the game's font
+has no cell for (～ U+FF5E -> A2B2, say); ``font.py``'s ``xs2_cell`` tells.
+
     python sbl.py --self-test
     python sbl.py FILE.sbl            # print the strings in editable form
 """
@@ -33,6 +45,7 @@ from typing import List
 
 MAGIC = b"SBL "
 HEADER = 0x40
+CODEC = "euc_jis_2004"          # see the module docstring; every text reader of the kit uses this
 
 
 class SblError(ValueError):
@@ -95,8 +108,8 @@ def to_text(s: bytes) -> str:
             continue
         piece = s[i:i + 2] if b != 0x8F else s[i:i + 3]
         try:
-            ch = piece.decode("euc_jp")
-            if ch.encode("euc_jp") == piece and len(ch) == 1:
+            ch = piece.decode(CODEC)
+            if ch.encode(CODEC) == piece and len(ch) == 1:
                 out.append(ch)
                 i += len(piece)
                 continue
@@ -111,11 +124,19 @@ def from_text(t: str) -> bytes:
     out = bytearray()
     pos = 0
     for m in _ESC.finditer(t):
-        out += t[pos:m.start()].encode("euc_jp")
+        out += t[pos:m.start()].encode(CODEC)
         out.append(int(m.group(1), 16))
         pos = m.end()
-    out += t[pos:].encode("euc_jp")
+    out += t[pos:].encode(CODEC)
     return bytes(out)
+
+
+def _decodes(b: bytes, enc: str) -> bool:
+    try:
+        b.decode(enc)
+        return True
+    except UnicodeDecodeError:
+        return False
 
 
 def self_test() -> int:
@@ -134,6 +155,14 @@ def self_test() -> int:
     check(all(from_text(to_text(s)) == s for s in strings), "editable text is lossless")
     check(to_text(b"<\xa2\xa2>") == "<" + b"\xa2\xa2".decode("euc_jp") + ">", "EUC-JP symbols read as text")
     check("⟦83⟧" in to_text(strings[3]), "Shift-JIS bytes that are not EUC-JP become escapes")
+    check(to_text(b"\xad\xa1 \xad\xb5") == "① Ⅰ" and from_text("① Ⅰ") == b"\xad\xa1 \xad\xb5",
+          "JIS row 13 (lead 0xAD) reads as text")
+    kana = b"\xa4\xf7"                 # one code that decodes to two code points: kept as bytes
+    check("⟦A4⟧" in to_text(kana) and from_text(to_text(kana)) == kana, "a two-code-point code stays an escape")
+    same = all(bytes((a, b)).decode("euc_jp") == bytes((a, b)).decode(CODEC)
+               for a in (0xA1, 0xA2, 0xA4, 0xA5, 0xB0, 0xCF) for b in range(0xA1, 0xFF)
+               if _decodes(bytes((a, b)), "euc_jp"))
+    check(same, "euc_jp and the kit codec agree wherever euc_jp decodes (sampled rows)")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

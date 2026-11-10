@@ -29,11 +29,19 @@ entry point landing on an instruction, every global slot in range.
 
 ```
 +0x00 "SB  "   +0x04 u32 1   +0x08 u32 ?   +0x0C u32 entries   +0x10 u32 imports
-+0x14 code     +0x18 globals  +0x1C (the .sbl's address at run time)
++0x14 code     +0x18 globals  +0x1C text pool (below)
 +0x20 entry table             +0x24 import table             +0x28 source name
 entry table : entries x {u32 name offset, u32 code word}, then the names
 import table: imports x {u16 function offset, u16 class offset}, then a string pool
 ```
+
+**+0x1C, the text-pool word.** On the USA discs it equals the entry-table
+offset in the file (nothing follows the globals) and `FUN_00a9f238` reads it
+at run time as the address of the loaded `.sbl`. On the Japanese discs and the
+demo it is the file offset of the first string of the script's own text pool:
+globals offset + `Script.pool_offset` in `sb.py` (592 of 592 Japanese
+scripts). The globals before that point are 32-bit variable slots; from there
+to the end they are NUL-terminated strings.
 
 Code is a stream of 16-bit words; an operand is the 32-bit value in the two
 words after the opcode. Code addresses count 16-bit words.
@@ -196,12 +204,41 @@ header version, opcodes and tables, with two differences (2026-11-05):
 * **Standalone battle AI.** The 109 `yamamoto\think\thinkNNN.sb` are the
   enemy-thinking scripts that retail folds into `model\map\E2_*.bin` (source
   names `think000`… as in retail). Retail OV01 still formats
-  `yamamoto\think\think%03d.sb` and `yamamoto\think\jp\think%03d.sbl`, but
-  neither retail disc lists such files. They call 80 natives (`bat`, `camera`,
+  `yamamoto\think\think%03d.sb` and `yamamoto\think\jp\think%03d.sbl`. The
+  USA discs list no such files; the Japanese retail discs do (116 under
+  `yamamoto\think\`, see below). They call 80 natives (`bat`, `camera`,
   `math`, and `deb.put`, which no retail table registers) and print their
   state in Japanese ("勝利者ゆにっと！！！", "★現在の技").
 
 Four demo headers leave the source-name word at 0.
+
+### Japanese retail (SLPS_253.68 / SLPS_253.69)
+
+The Japanese discs are built like the demo: no `.sbl`, no `en\` folders, all
+592 scripts (356 `cf\`, 120 `model\map\`, 116 `yamamoto\think\`) with
+inline text (2026-11-10, both discs; chain 0 is the same on both). They also
+keep the debug scenes sc6301 and sc7997 to sc7999.
+
+**Strings reached through tables.** A `pushtext` is not the only way to a
+string. Some variable slots hold, as their initial value, the pool offset of
+a string: tutorial pages in `think002`/`think003` and `E2_KML03`/`E2_KML04`,
+item and shop lists in `cf\sc1610`. `Script.pointer_slots()` finds them (a
+slot before the pool whose value is the start of a pool string):
+
+| | Japan Disc 1 (= Disc 2) | demo |
+|---|---|---|
+| scripts | 592 | 141 |
+| strings a `pushtext` names (93 of the Japanese ones are empty) | 17,053 | 3,871 |
+| slots that point at a pool string | 203 in 19 scripts | 128 in 4 scripts |
+| strings only a slot reaches | 172 | 128 |
+| all strings (`text-export`) | 17,225 | 3,999 |
+| pool strings neither reaches | 0 | 0 |
+
+`text-export` writes both kinds (`### @0xOFFSET max N bytes`, with `table`
+after the ones only a slot reaches); `text-import` writes a changed string
+back in place, same length or shorter, and refuses a longer one. Growing a
+string would mean moving the pool and rewriting every pushtext operand *and*
+every pointer slot; the kit does not do that.
 
 ## Native signatures
 

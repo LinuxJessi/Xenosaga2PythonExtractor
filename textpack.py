@@ -62,6 +62,95 @@ def _sbl_entries(iso: IsoImage):
                 yield chain, reader, e, alloc[e.path]
 
 
+# ------------------------------------------------ inline text (Japan, the demo)
+#
+# The Japanese discs have no .sbl: a pushtext operand is the byte offset of a
+# NUL-terminated EUC-JP string in the script's own globals (sb.py). Export
+# writes OUT/chainN/<script>.inline.txt with one ``### @0xOFFSET`` block per
+# string; import re-encodes and writes each string back IN PLACE, so a string
+# may shrink (NUL-padded) but never grow: every other pushtext and every global
+# slot keep their offsets, and the .sb keeps its size.
+#
+# A string is listed when a pushtext names it or when a variable slot holds its
+# offset (``sb.Script.pointer_slots``; the block header then says "table").
+# Japan Disc 1: 17,053 + 172 = 17,225 strings in 592 scripts, which is every
+# string of every text pool. A rebuild that lets strings grow would have to
+# move the pool and rewrite both the pushtext operands and those slots; the kit
+# does not offer one.
+
+def _inline_entries(iso: IsoImage):
+    import sb
+    for chain in available_chains(iso):
+        reader = ChainReader(iso, chain)
+        entries = parse_toc(bytes(reader.toc_bytes()), CHAINS[chain][0])
+        for e in entries:
+            if e.ext not in ("sb", "bin") or e.compressed:
+                continue
+            data = reader.read(e.byte_offset, e.size)
+            if data[:4] != sb.MAGIC:
+                continue
+            s = sb.parse(data)
+            if s.text_kind in ("inline", "mixed"):
+                yield chain, e, data, s
+
+
+def _inline_path(root: Path, chain: int, path: str) -> Path:
+    return root / f"chain{chain}" / Path(*path.split("\\")).with_suffix(".inline.txt")
+
+
+def export_inline(iso: IsoImage, root: Path) -> Tuple[int, int]:
+    import sb
+    n_files = n_strings = 0
+    for chain, e, data, s in _inline_entries(iso):
+        lines = [f"# {e.path}  chain{chain}  inline strings (grow refused; shrink is NUL-padded)"]
+        for o, how in s.text_offsets():
+            raw = s.inline_text(o)
+            lines += [f"### @{o:#x} max {len(raw)} bytes" + ("  table" if how == "table" else ""),
+                      sbl.to_text(raw)]
+            n_strings += 1
+        dest = _inline_path(root, chain, e.path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        n_files += 1
+    return n_files, n_strings
+
+
+def plan_inline(iso: IsoImage, root: Path, changed, problems) -> None:
+    import struct
+    for chain, e, data, s in _inline_entries(iso):
+        src = _inline_path(root, chain, e.path)
+        if not src.exists():
+            continue
+        glob_off = struct.unpack_from("<I", data, 0x18)[0]
+        known = {o for o, _ in s.text_offsets()}
+        out = bytearray(data)
+        cur = None
+        blocks = {}
+        for line in src.read_text(encoding="utf-8").split("\n"):
+            if line.startswith("### @"):
+                cur = int(line[5:].split()[0], 16)
+                blocks[cur] = []
+            elif cur is not None and not line.startswith("#"):
+                blocks[cur].append(line)
+        for o, b in blocks.items():
+            while len(b) > 1 and b[-1] == "":
+                b.pop()
+            old = s.inline_text(o) if o in known else None
+            if old is None:
+                problems.append(f"{e.path}: @{o:#x} is not a string this script's export lists")
+                continue
+            new = sbl.from_text("\\n".join(b))
+            if new == old:
+                continue
+            if len(new) > len(old):
+                problems.append(f"{e.path}: @{o:#x} grows {len(old)} -> {len(new)} bytes (in-place only)")
+                continue
+            a = glob_off + o
+            out[a:a + len(old)] = new + b"\x00" * (len(old) - len(new))
+        if bytes(out) != data:
+            changed[(chain, e.path)] = bytes(out)
+
+
 def _sjis_hint(s: bytes) -> str:
     try:
         t = s.decode("shift_jis")
@@ -97,6 +186,9 @@ def export_text(iso_path: str, out_dir: str) -> int:
         n_files += 1
         n_strings += len(strings)
     print(f"exported {n_strings} strings from {n_files} .sbl files to {root}", file=sys.stderr)
+    fi, si = export_inline(iso, root)
+    if fi:
+        print(f"exported {si} inline strings from {fi} .sb scripts (Japan/demo layout) to {root}", file=sys.stderr)
     return 0
 
 
@@ -137,6 +229,7 @@ def plan_import(iso_path: str, text_dir: str) -> Tuple[Dict[Tuple[int, str], byt
             problems.append(f"{e.path}: rebuilt size {len(blob)} exceeds its {alloc}-byte slot")
             continue
         changed[(chain, e.path)] = blob
+    plan_inline(iso, root, changed, problems)
     return changed, problems
 
 
@@ -155,7 +248,7 @@ def import_text(iso_path: str, text_dir: str, out_iso: str) -> int:
         print(f"copying {iso_path} -> {out_iso} ...", file=sys.stderr)
         shutil.copyfile(iso_path, out_iso)
     patch_iso(out_iso, changed)
-    print(f"patched {len(changed)} .sbl file(s) into {out_iso}", file=sys.stderr)
+    print(f"patched {len(changed)} text file(s) into {out_iso}", file=sys.stderr)
     return 0
 
 

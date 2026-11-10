@@ -470,7 +470,40 @@ def xs2_discs(isos: List[str]) -> List[str]:
         m = re.search(r"disc\s*([12])", name, re.I)
         disc = int(m.group(1)) if m else 1
         picked.setdefault(disc, p)
-    return [picked[d] for d in sorted(picked)]
+    return _one_region([picked[d] for d in sorted(picked)], isos)
+
+
+def _one_region(pair: List[str], isos: List[str]) -> List[str]:
+    """Keep Disc 1 and Disc 2 of one build: when the pair found by file name mixes
+    regions (Japan Disc 1 beside USA Disc 2 in one folder), swap Disc 2 for one of
+    Disc 1's region if the folder has it, else keep Disc 1 alone. Images that
+    cannot be opened are left as they are."""
+    if len(pair) < 2:
+        return pair
+    try:
+        import region
+        from iso9660 import IsoImage
+
+        def reg(p):
+            iso = IsoImage(p)
+            try:
+                return region.region_of(iso).name
+            finally:
+                iso.close()
+
+        want = reg(pair[0])
+        if reg(pair[1]) == want:
+            return pair
+        for p in isos:
+            name = Path(p).name
+            if (p not in pair and _XS2.search(name) and "copy" not in name.lower()
+                    and re.search(r"disc\s*2", name, re.I) and reg(p) == want):
+                return [pair[0], p]
+        print(f"warning: {Path(pair[1]).name} is a different region from {Path(pair[0]).name}; using Disc 1 only",
+              file=sys.stderr)
+        return pair[:1]
+    except Exception:                    # not an image the kit can open: leave the choice alone
+        return pair
 
 
 def _tool(name: str) -> Optional[str]:

@@ -1,5 +1,24 @@
 # Updates
 
+## 2026-11-10: regions
+
+* **`region.py`**: the build is read from the boot executable. USA Disc 1
+  SLUS_208.92 and Disc 2 SLUS_211.33 (serials read from SYSTEM.CNF; one
+  executable on both), Japan SLPS_253.68 / .69, the demo SLPS_253.53. Script
+  text, movie subtitles, fonts and the battle database are found by the
+  region's layout. Executable addresses go through the ELF program headers
+  (`va_to_offset`).
+* **Japanese text.** `text-export` on a Japanese disc writes the scripts'
+  inline strings: 17,225 in 592 scripts, including 172 that only a pointer
+  table reaches (`sb.Script.pointer_slots`). `text-import` writes them back
+  in place (same length or shorter).
+* **Codec.** The kit's text codec is `euc_jis_2004` (`sbl.CODEC`), chosen by
+  measurement: the two codecs never disagree on a code both define; 73
+  Japanese strings (JIS row 13: ①, Ⅰ) fail under `euc_jp` and none under
+  `euc_jis_2004`; USA output is unchanged byte for byte.
+* **Mixed discs.** `list`, `dump`, `natives` and `dialogue` warn when the
+  images are different builds; the GUI's disc picker keeps one region.
+
 ## 2026-11-05 (night): the *Xenosaga Freaks* demo, native signatures
 
 * **Chains in a directory.** `chains.chain_files` finds a chain's bigfiles
