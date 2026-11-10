@@ -252,8 +252,10 @@ class Context:
                 self._limits = moviesub.limits_of(files, self.measure())
             except moviesub.SubtitleError as e:
                 raise TextError(f"a retail subtitle file of this disc does not parse ({e})")
-            except ValueError:                  # a retail line the width function cannot follow
-                self._limits = moviesub.limits_of(files, None)
+            except ValueError as e:             # a line the width function cannot follow: without the
+                # pixel bound the check would be weaker than promised, so subtitles are not editable here
+                raise TextError(f"a subtitle line of this disc cannot be measured ({e}); subtitle edits are "
+                                f"refused on this image")
         return self._limits
 
 
@@ -317,7 +319,10 @@ class Kind:
 
 
 def _tree(root: Path, chain: int, path: str) -> Path:
-    return root / f"chain{chain}" / Path(*path.replace("/", "\\").split("\\"))
+    parts = path.replace("/", "\\").split("\\")
+    if any(p in ("", ".", "..") or ":" in p for p in parts):     # a damaged table of contents must not
+        raise TextError(f"object path {path!r} cannot be a file path")   # write outside the export folder
+    return root / f"chain{chain}" / Path(*parts)
 
 
 class Bank(Kind):
@@ -431,7 +436,8 @@ class Inline(Kind):
         if again.text_offsets() != offs:
             lost = sorted(set(offs) - set(again.text_offsets()))
             raise TextError(f"the edit would make {len(lost)} string(s) disappear from the next export "
-                            f"(### @{lost[0][0]:#x}: a string that only a table points at may not be emptied)")
+                            + (f"(### @{lost[0][0]:#x}: a string that only a table points at may not be emptied)"
+                               if lost else "(the script's string list changed)"))
         return bytes(out)
 
     def limit(self, ctx, e, data, new, alloc, sizes, grow):
@@ -706,6 +712,8 @@ def export_text(iso_path: str, out_dir: str) -> int:
         print(f"note: {serial} is not a build the kit knows; the text is exported as EUC-JP for reading. "
               f"text-import will refuse this disc", file=sys.stderr)
     done: Dict[str, List[int]] = {}
+    written: Dict[Path, str] = {}
+    kept: List[str] = []
     for chain, e, kind, stored, data, alloc, sizes in _objects(iso):
         info = {"chain": chain, "alloc": alloc, "sizes": sizes}
         try:
@@ -718,7 +726,18 @@ def export_text(iso_path: str, out_dir: str) -> int:
             print(f"text-export: {e.path} left out: {ex}", file=sys.stderr)
             continue
         dest = kind.tree_path(root, chain, e.path)
+        if dest in written:                          # two objects of one disc mapping to one file
+            print(f"text-export: {e.path} left out: its file {dest.name} is already used by "
+                  f"{written[dest]}", file=sys.stderr)
+            continue
+        written[dest] = e.path
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            with open(dest, encoding="utf-8-sig", newline="") as fh:
+                have = fh.read()
+            if have != text:                         # someone's edits: an export never overwrites them
+                kept.append(_rel(root, dest))
+                continue
         with open(dest, "w", encoding="utf-8", newline="") as fh:     # line ends exactly as written here
             fh.write(text)
         manifest["objects"][_rel(root, dest)] = {"chain": chain, "path": e.path, "kind": kind.name,
@@ -733,7 +752,11 @@ def export_text(iso_path: str, out_dir: str) -> int:
     for name, (files, strings) in sorted(done.items()):
         print(f"exported {files} {name} file(s)" + (f", {strings} strings" if strings else "") + f" to {root}",
               file=sys.stderr)
-    if not done:
+    if kept:
+        print(f"kept {len(kept)} file(s) in {root} that differ from this disc's text (edited, or from another "
+              f"export) and did not overwrite them, e.g. {kept[0]}. Export into an empty folder for a fresh copy",
+              file=sys.stderr)
+    if not done and not kept:
         print(f"no text objects found on {iso_path}", file=sys.stderr)
     return 0
 
@@ -747,6 +770,7 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
     iso = IsoImage(iso_path)
     ctx = Context(iso, need_executable=True)
     root = Path(text_dir)
+    matched = set()
     changed: Dict[Tuple[int, str], bytes] = {}
     problems: List[str] = []
     manifest = None
@@ -767,6 +791,7 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
         src = kind.tree_path(root, chain, e.path)
         if not src.exists():
             continue
+        matched.add(_rel(root, src))
         if manifest is not None:
             rec = manifest["objects"].get(_rel(root, src))
             sha = hashlib.sha1(stored).hexdigest()
@@ -797,6 +822,11 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
             continue
         changed[(chain, e.path)] = new
     iso.close()
+    if manifest is not None:
+        absent = sorted(k for k in manifest.get("objects", {}) if k not in matched and (root / k).exists())
+        if absent:                                   # e.g. a Disc 1 tree given Disc 2: its own-chain files
+            print(f"note: {len(absent)} text file(s) of this export have no object on this disc and were not "
+                  f"applied (e.g. {absent[0]})", file=sys.stderr)
     return changed, problems
 
 

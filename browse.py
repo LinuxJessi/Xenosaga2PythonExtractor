@@ -221,11 +221,18 @@ def _one_model(args) -> dict:
             # is still right, so it is written with its joints left where the file binds them
             row["skeleton"] = f"not used ({e})"
             blob = pxy.to_glb(p, txy_data, None)
-    except (pxy.PxyError, VifError, xhr.XhrError) as e:
-        row["status"] = f"not decoded: {e}"
+    except Exception as e:                           # a damaged file must not stop the others
+        known = isinstance(e, (pxy.PxyError, VifError, xhr.XhrError))
+        row["status"] = f"not decoded: {e}" if known else f"not decoded: {type(e).__name__}: {e}"
+        try:
+            Path(dest).unlink()                      # no stale .glb from an earlier run beside a failure
+        except OSError:
+            pass
         return row
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
-    Path(dest).write_bytes(blob)
+    part = Path(str(dest) + ".partial")              # a .glb under its final name is always complete
+    part.write_bytes(blob)
+    os.replace(part, dest)
     row["status"] = "ok" if row["checks"] == "all pass" else "written, a check failed"
     return row
 

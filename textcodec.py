@@ -223,8 +223,9 @@ class UsCodec(Codec):
     CHARS = {ch: piece for piece, ch in PAIRS.items()}
 
     def read(self, s: bytes, i: int) -> int:
-        nxt = s[i + 1] if i + 1 < len(s) else 0
-        return 2 if s[i] >= 0x80 and font.us_two_byte(s[i], nxt) else 1
+        if i + 1 >= len(s):                      # a lead byte with nothing after it is one byte
+            return 1
+        return 2 if s[i] >= 0x80 and font.us_two_byte(s[i], s[i + 1]) else 1
 
     def _decode(self, s: bytes, file: bool) -> str:
         out, i, n = [], 0, len(s)

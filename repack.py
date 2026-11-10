@@ -324,9 +324,7 @@ def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
         if _fail_after_copy is not None:            # self-tests: an error in the middle of the work
             _fail_after_copy(tmp)
         reports = patch_iso(tmp, replacements, verbose=verbose, grow=grow, relocate=relocate)
-        if dst.is_symlink():                         # replace the link itself, never write through it
-            dst.unlink()
-        os.replace(tmp, dst)
+        os.replace(tmp, dst)                         # replaces a link itself, never writes through it
     except BaseException:
         try:
             if tmp.exists():
