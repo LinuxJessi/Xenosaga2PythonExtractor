@@ -49,15 +49,20 @@ class Region:
     exe: Optional[str] = None           # the game executable when it is not the boot ELF
     kanji_list_va: Optional[int] = None  # the font's extra-kanji list (font.py); None = not located
     ascii_table_va: Optional[int] = None  # the font's ASCII -> EUC table: u16 at VA + 2 * byte
+    exe_sha256: Optional[str] = None    # the executable every address above was read from
+    serial: Optional[str] = None        # set only on the profile of an UNKNOWN build
 
 
 US = Region("us", "en", "sbl", ("font0.us", "font1.us"), "yamamoto\\batdat.us", "carddata.bin",
-            kanji_list_va=0x63E870, ascii_table_va=0x63E770)     # FUN_00197988, FUN_00198b90
+            kanji_list_va=0x63E870, ascii_table_va=0x63E770,     # FUN_00197988, FUN_00198b90
+            exe_sha256="1f978e64c837f9b5f0dcaee4bbe3fc28b45368fdac47404eecf2249dcbf7462e")
 JP = Region("jp", None, "inline", ("font0.tex", "font1.tex"), "yamamoto\\batdat.bin", "carddata.new",
-            kanji_list_va=0x63A2A0, ascii_table_va=0x63A1A0)     # code at 0x197828, 0x198a58
+            kanji_list_va=0x63A2A0, ascii_table_va=0x63A1A0,     # code at 0x197828, 0x198a58
+            exe_sha256="4e6b7fa2d0fb21af561519d914cf5b84598b6ad8622412a0daa6963825942c75")
 DEMO = Region("demo", None, "inline", ("font0.tex", "font1.tex"), "yamamoto\\batdat.bin", "carddata.new",
               exe="EXP\\EXP.ELF",
-              kanji_list_va=0x639060, ascii_table_va=0x638F60)   # code at 0x197978, 0x198bb8
+              kanji_list_va=0x639060, ascii_table_va=0x638F60,   # code at 0x197978, 0x198bb8
+              exe_sha256="6205048be90af43bf43e7dfeb3a4b2fa67278b82ad894bdb9313ff725afd5b53")
 
 PROFILES = {
     "SLUS_208.92": US,          # Disc 1
@@ -68,13 +73,50 @@ PROFILES = {
 }
 
 
+class UnknownBuild(ValueError):
+    pass
+
+
 def region_of(iso) -> Region:
-    """The profile for an IsoImage, by boot executable; unknown discs fall back on
-    what their chain 0 holds (any ``\\en\\`` folder = USA layout)."""
+    """The profile for an IsoImage, by the serial of its boot executable. A serial the
+    kit does not know gets a profile named "unknown" that carries the serial and
+    nothing else: no known build's layout, addresses or loader rules are assumed for
+    it. Such an image can be listed, dumped and browsed (those read the TOC only);
+    every writer and every reader of executable tables calls ``require_known`` and
+    refuses."""
     name = iso.boot_elf_name() if hasattr(iso, "boot_elf_name") else None
     if name in PROFILES:
         return PROFILES[name]
-    return US if any("\\EN\\" in p.upper() for p in getattr(iso, "files", {})) else JP
+    return Region("unknown", None, "unknown", (), "", "", serial=name or "(no boot executable)")
+
+
+def require_known(iso, what: str) -> Region:
+    """The image's profile, or UnknownBuild naming the serial that was seen."""
+    prof = region_of(iso)
+    if prof.name == "unknown":
+        raise UnknownBuild(f"{what} is refused: this image's boot executable is {prof.serial}, a build "
+                           f"the kit does not know (known: {', '.join(sorted(PROFILES))}). "
+                           f"list, dump and browse still work")
+    return prof
+
+
+# sha256 of executables a self-test builds in code (minidisc.py); never a real build
+TEST_EXECUTABLES = set()
+
+
+def require_executable(iso, what: str) -> Region:
+    """``require_known`` plus: the executable on the image is byte for byte the one the
+    profile's addresses and loader rules were read from (a re-release under the same
+    serial, or a patched executable, is refused)."""
+    import hashlib
+    prof = require_known(iso, what)
+    name, data = executable(iso)
+    got = hashlib.sha256(data).hexdigest()
+    if got != prof.exe_sha256 and got not in TEST_EXECUTABLES:
+        raise UnknownBuild(f"{what} is refused: {name} on this image is not the executable the kit's "
+                           f"{prof.name} rules were read from (sha256 {got[:16]}..., expected "
+                           f"{(prof.exe_sha256 or '?')[:16]}...)")
+    return prof
 
 
 def mixed_regions(isos: Iterable) -> Optional[str]:
@@ -106,15 +148,26 @@ class ElfError(ValueError):
 
 
 def elf_segments(elf: bytes) -> List[Tuple[int, int, int]]:
-    """(virtual address, file offset, file size) of every PT_LOAD program header."""
-    if elf[:4] != b"\x7fELF" or len(elf) < 0x34:
+    """(virtual address, file offset, file size) of every PT_LOAD program header.
+    The file must be a 32-bit little-endian ELF whose program-header table and
+    every loaded segment lie inside the file; anything else is an ElfError."""
+    if len(elf) < 0x34 or elf[:4] != b"\x7fELF":
         raise ElfError("not an ELF")
+    if elf[4] != 1 or elf[5] != 1:
+        raise ElfError(f"not a 32-bit little-endian ELF (class {elf[4]}, data {elf[5]})")
     phoff = struct.unpack_from("<I", elf, 0x1C)[0]
     phentsize, phnum = struct.unpack_from("<HH", elf, 0x2A)
+    if phnum and phentsize < 32:
+        raise ElfError(f"program-header entries of {phentsize} bytes")
+    if phoff + phentsize * phnum > len(elf):
+        raise ElfError("the program-header table runs past the end of the file")
     segs = []
     for i in range(phnum):
         p_type, p_offset, p_vaddr, _pa, p_filesz = struct.unpack_from("<5I", elf, phoff + phentsize * i)
         if p_type == 1:
+            if p_offset + p_filesz > len(elf):
+                raise ElfError(f"segment {i} ({p_filesz:#x} bytes at file offset {p_offset:#x}) runs past "
+                               f"the end of the {len(elf)}-byte file")
             segs.append((p_vaddr, p_offset, p_filesz))
     return segs
 
@@ -129,15 +182,24 @@ def va_to_offset(elf: bytes, va: int, length: int = 1) -> int:
 
 
 def read_va(elf: bytes, va: int, length: int) -> bytes:
-    o = va_to_offset(elf, va, length)
-    return bytes(elf[o:o + length])
+    """Exactly ``length`` bytes at ``va``, or ElfError: never a short slice."""
+    if length < 0:
+        raise ElfError("negative length")
+    o = va_to_offset(elf, va, max(length, 1))
+    out = bytes(elf[o:o + length])
+    if len(out) != length:
+        raise ElfError(f"short read at VA {va:#x}: {len(out)} of {length} bytes")
+    return out
 
 
 def executable(iso) -> Tuple[str, bytes]:
     """(name, bytes) of the game executable on an image: the profile's ``exe`` when it
     names one (the demo), else the boot ELF."""
-    name = region_of(iso).exe
-    if name is None or name not in iso.files:
+    prof = region_of(iso)
+    name = prof.exe
+    if name is not None and name not in iso.files:
+        raise ElfError(f"this {prof.name} image has no {name}")
+    if name is None:
         name = iso.boot_elf_name()
     if name is None:
         raise ElfError("no boot executable on this image")
@@ -182,11 +244,20 @@ def self_test() -> int:
     check(mixed_regions([_Iso("SLUS_208.92"), _Iso("SLUS_211.33")]) is None, "USA Disc 1 + Disc 2 is one region")
     msg = mixed_regions([_Iso("SLPS_253.68"), _Iso("SLUS_211.33")])
     check(msg is not None and "jp" in msg and "us" in msg, "Japan Disc 1 + USA Disc 2 is flagged")
+    unk = region_of(_Iso("SLES_999.99"))
+    check(unk.name == "unknown" and unk.serial == "SLES_999.99" and unk.kanji_list_va is None
+          and unk.lang_dir is None and not unk.fonts, "an unknown serial gets no known build's profile")
+    try:
+        require_known(_Iso("SLES_999.99"), "text-import")
+        check(False, "require_known refuses an unknown serial")
+    except UnknownBuild as e:
+        check("SLES_999.99" in str(e) and "text-import" in str(e), "require_known refuses, naming the serial it saw")
+    check(require_known(_Iso("SLUS_211.33"), "x") is US, "a known serial passes")
     # a two-segment ELF built here: VA -> file offset goes through the program headers
     ph = struct.pack("<8I", 1, 0x1000, 0x120000, 0x120000, 0x200, 0x200, 5, 0x1000) \
         + struct.pack("<8I", 1, 0x1300, 0x2B0000, 0x2B0000, 0x100, 0x900, 6, 0x1000)
     head = bytearray(0x34)
-    head[:4] = b"\x7fELF"
+    head[:6] = b"\x7fELF\x01\x01"
     struct.pack_into("<I", head, 0x1C, 0x34)
     struct.pack_into("<HH", head, 0x2A, 32, 2)
     elf = bytes(head) + ph + bytes(0x1000 - 0x34 - 64) + bytes(range(256)) * 2 + bytes(0x100) + b"KANJI".ljust(0x100, b"\0")
@@ -196,6 +267,30 @@ def self_test() -> int:
         check(False, "a .bss address is refused")
     except ElfError:
         check(True, "a .bss address is refused")
+
+    def refused(blob, why):
+        try:
+            elf_segments(blob)
+            check(False, f"ELF refused: {why}")
+        except ElfError:
+            check(True, f"ELF refused: {why}")
+
+    big = bytearray(elf)
+    big[4] = 2
+    refused(bytes(big), "64-bit class")
+    big = bytearray(elf)
+    big[5] = 2
+    refused(bytes(big), "big-endian")
+    refused(elf[:0x40], "program headers past the end of the file")
+    refused(elf[:0x1340], "a segment whose file bytes are cut off")
+    big = bytearray(elf)
+    struct.pack_into("<I", big, 0x34 + 32 + 16, 0x100000)       # second segment: p_filesz far too large
+    refused(bytes(big), "a segment size larger than the file")
+    try:
+        read_va(elf, 0x2B00FE, 4)                   # two bytes inside the segment, two outside
+        check(False, "a read across the end of a segment is an error")
+    except ElfError:
+        check(True, "a read across the end of a segment is an error, not a short slice")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

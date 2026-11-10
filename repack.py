@@ -20,10 +20,16 @@ USA discs is packed to the sector, so any growth is an append. Disc 1 has
 8,912 sectors (17 MB) of single-layer DVD headroom; beyond that the image
 is fine for emulators but no longer fits a DVD-5.
 
-Usage (always work on a copy; patching is in place):
+Usage: ``patch_copy`` is what every command of the kit calls. It never
+touches the source image and never leaves a half-written output: the copy is
+made and patched under a temporary name beside the destination and moved
+into place only after every write has been read back.
 
-    from repack import patch_iso
-    patch_iso("copy.iso", {(0, "cf\\\\en\\\\sc1010.sbl"): new_bytes})
+    from repack import patch_copy
+    patch_copy("Disc 1.iso", "modded.iso", {(0, "cf\\\\en\\\\sc1010.sbl"): new_bytes})
+
+``patch_iso`` is the in-place step underneath (it patches the file it is
+given; ``patch_copy`` gives it the temporary copy).
 
 Payloads are given *uncompressed*; entries the TOC marks compressed are
 ARX-compressed automatically.
@@ -262,6 +268,72 @@ def patch_iso(iso_path: str | Path,
             mm.close()
     finally:
         iso.close()
+    return reports
+
+
+def same_file(a, b) -> bool:
+    """True when two paths name one file: the same path after resolving links, or
+    two names (hard links) of one file."""
+    import os
+    a, b = Path(a), Path(b)
+    try:
+        if a.resolve() == b.resolve():
+            return True
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
+               verbose: bool = True, grow: bool = False, relocate=(), _fail_after_copy=None) -> List[PatchReport]:
+    """Copy ``iso_path`` to ``out_iso`` with the replacements patched in.
+
+    * The source is opened for reading only. ``out_iso`` may not be the source,
+      by any name (a symlink or hard link to it is refused, RepackError).
+    * The build must be one the kit knows (``region.require_known``): the patch
+      relies on that build's TOC and loaders.
+    * The work is done on ``<out>.partial`` in the destination's folder; it
+      replaces ``out_iso`` (``os.replace``) only after ``patch_iso`` has written
+      and read back every object. On any error the partial file is removed and
+      an existing ``out_iso`` is left exactly as it was.
+    """
+    import os
+    import shutil
+
+    import region
+    src, dst = Path(iso_path), Path(out_iso)
+    if same_file(src, dst):
+        raise RepackError(f"--out {dst} is the input image itself ({src.resolve()}); the kit never patches "
+                          f"its source. Give another file name")
+    iso = IsoImage(src)
+    try:
+        region.require_known(iso, "patching")
+    finally:
+        iso.close()
+    if dst.is_dir():
+        raise RepackError(f"--out {dst} is a folder")
+    tmp = dst.with_name(dst.name + ".partial")
+    if same_file(src, tmp):
+        raise RepackError(f"{tmp} is the input image")
+    try:
+        if verbose:
+            print(f"copying {src} -> {tmp} ...")
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        shutil.copyfile(src, tmp)
+        if _fail_after_copy is not None:            # self-tests: an error in the middle of the work
+            _fail_after_copy(tmp)
+        reports = patch_iso(tmp, replacements, verbose=verbose, grow=grow, relocate=relocate)
+        if dst.is_symlink():                         # replace the link itself, never write through it
+            dst.unlink()
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
     return reports
 
 

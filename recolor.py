@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import embedded  # noqa: E402
 import txy  # noqa: E402
+import region
 from chains import CHAINS, ChainReader, available_chains  # noqa: E402
 from iso9660 import IsoImage  # noqa: E402
 from toc import parse_toc  # noqa: E402
@@ -202,12 +203,13 @@ def run(iso_path: str, out_iso: Optional[str], rules: List[Tuple[str, str]], hue
     if not out_iso:
         print("no --out given; nothing written", file=sys.stderr)
         return 2
-    from repack import patch_iso
+    from repack import RepackError, patch_copy
 
-    if Path(out_iso).resolve() != Path(iso_path).resolve():
-        print(f"copying {iso_path} -> {out_iso} ...", file=sys.stderr)
-        shutil.copyfile(iso_path, out_iso)
-    patch_iso(out_iso, replacements)
+    try:
+        patch_copy(iso_path, out_iso, replacements)
+    except (RepackError, region.UnknownBuild) as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -241,14 +243,15 @@ def recolor_xtx(data: bytes, hue: float) -> Tuple[bytes, int]:
 
 
 def run_xtx(iso_path: str, out_iso: str, path: str, hue: float, chain: int = 0) -> int:
-    from repack import patch_iso, read_entry
+    from repack import RepackError, patch_copy, read_entry
 
     new, edits = recolor_xtx(read_entry(iso_path, chain, path), hue)
     print(f"chain{chain} {path}: {edits} pixels recoloured")
-    if Path(out_iso).resolve() != Path(iso_path).resolve():
-        print(f"copying {iso_path} -> {out_iso} ...", file=sys.stderr)
-        shutil.copyfile(iso_path, out_iso)
-    patch_iso(out_iso, {(chain, path): new}, grow=True)
+    try:
+        patch_copy(iso_path, out_iso, {(chain, path): new}, grow=True)
+    except (RepackError, region.UnknownBuild) as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -279,7 +282,10 @@ def main(argv=None) -> int:
     ap.add_argument("--xtx", help="instead: colourise this true-colour .xtx (TOC path, chain 0)")
     a = ap.parse_args(argv)
     if a.xtx:
-        return run_xtx(a.iso, a.out or a.iso, a.xtx, a.hue)
+        if not a.out:
+            print("--xtx needs --out (a new file; the input image is never patched)", file=sys.stderr)
+            return 2
+        return run_xtx(a.iso, a.out, a.xtx, a.hue)
     rules = _rules(a.preset or (None if a.rule else "kosmos-hair"), a.rule)
     return run(a.iso, a.out, rules, a.hue, a.preview, a.dry_run)
 

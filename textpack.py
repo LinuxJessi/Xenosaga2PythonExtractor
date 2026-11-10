@@ -611,24 +611,37 @@ def plan_import(iso_path: str, text_dir: str,
 
 
 def import_text(iso_path: str, text_dir: str, out_iso: str, grow: bool = False) -> int:
-    from repack import patch_iso
+    from repack import RepackError, patch_copy, same_file
 
-    changed, problems = plan_import(iso_path, text_dir, grow=grow)
+    if same_file(iso_path, out_iso):
+        print(f"refused: --out {out_iso} is the input image itself; the kit never patches its source. "
+              f"Give another file name", file=sys.stderr)
+        return 1
+    try:
+        changed, problems = plan_import(iso_path, text_dir, grow=grow)
+    except region.UnknownBuild as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
     for p in problems:
         print("refused: " + p, file=sys.stderr)
     if problems:
+        print("nothing was written", file=sys.stderr)
         return 1
     if not changed:
         print("no text changed; nothing written", file=sys.stderr)
         return 0
-    if Path(out_iso).resolve() != Path(iso_path).resolve():
-        print(f"copying {iso_path} -> {out_iso} ...", file=sys.stderr)
-        shutil.copyfile(iso_path, out_iso)
-    reports = patch_iso(out_iso, changed, grow=grow)
+    try:
+        reports = patch_copy(iso_path, out_iso, changed, grow=grow)
+    except (RepackError, region.UnknownBuild) as e:
+        print(f"refused: {e}; nothing was written", file=sys.stderr)
+        return 1
     moved = [r for r in reports if r.relocated_lba is not None]
-    print(f"patched {len(changed)} text file(s) into {out_iso}"
-          + (f"; {len(moved)} relocated to the end of the image (not yet seen in the running game)"
-             if moved else ""), file=sys.stderr)
+    for r in moved:
+        print(f"WARNING: chain{r.chain} {r.path} was RELOCATED to the end of the image (sector "
+              f"{r.relocated_lba}). The loader room was read from the code; a relocated text bank has "
+              f"NOT been seen working in the running game. Test this scene or map before relying on it",
+              file=sys.stderr)
+    print(f"patched {len(changed)} text file(s) into {out_iso}", file=sys.stderr)
     return 0
 
 

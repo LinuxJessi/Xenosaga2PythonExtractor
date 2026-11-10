@@ -30,7 +30,7 @@ packer; an untouched object recompresses to the same bytes.
 python cli.py recolor --iso "Disc 1.iso" --out pink.iso                     # KOS-MOS's hair, pink
 python cli.py recolor --iso "Disc 1.iso" --out x.iso --rule 'shion*_hair=all' --hue 0.08
 python cli.py recolor --iso "Disc 1.iso" --dry-run --preview prev/          # before/after PNGs only
-python cli.py recolor --iso pink.iso --out pink.iso --xtx 'yajima\titleobj.xtx'
+python cli.py recolor --iso pink.iso --out pink2.iso --xtx 'yajima\titleobj.xtx'    # a second edit: a new file again
 ```
 
 A texture is named by its `.txy` entry, the names the artists gave them

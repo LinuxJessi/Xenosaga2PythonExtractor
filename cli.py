@@ -308,7 +308,10 @@ def cmd_recolor(args) -> int:
     import recolor
 
     if args.xtx:
-        return recolor.run_xtx(args.iso, args.out or args.iso, args.xtx, args.hue)
+        if not args.out:
+            print("recolor --xtx needs --out (a new file; the input image is never patched)", file=sys.stderr)
+            return 2
+        return recolor.run_xtx(args.iso, args.out, args.xtx, args.hue)
     rules = recolor._rules(args.preset or (None if args.rule else "kosmos-hair"), args.rule)
     return recolor.run(args.iso, args.out, rules, args.hue, args.preview, args.dry_run)
 
@@ -332,9 +335,7 @@ def cmd_dialogue(args) -> int:
 
 
 def cmd_patch(args) -> int:
-    import shutil
-
-    from repack import patch_iso
+    from repack import RepackError, patch_copy
 
     replacements = {}
     for spec in args.set:
@@ -346,12 +347,12 @@ def cmd_patch(args) -> int:
             print(f"bad --set {spec!r} (want 'chain0:some\\path=file')", file=sys.stderr)
             return 2
         replacements[(chain, path)] = Path(src).read_bytes()
-    dst = Path(args.out)
-    if dst.resolve() != Path(args.iso).resolve():
-        print(f"copying {args.iso} -> {dst} ...", file=sys.stderr)
-        shutil.copyfile(args.iso, dst)
-    patch_iso(dst, replacements, grow=args.grow,
-              relocate=set(replacements) if args.relocate else ())
+    try:
+        patch_copy(args.iso, args.out, replacements, grow=args.grow,
+                   relocate=set(replacements) if args.relocate else ())
+    except (RepackError, region.UnknownBuild) as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -381,7 +382,7 @@ def cmd_font_rebuild(args) -> int:
     import font
 
     try:
-        return font.cmd_rebuild(args.ref, args.sheets, args.out, args.metrics)
+        return font.cmd_rebuild(args.ref, args.sheets, args.out, args.metrics, args.allow_unchanged)
     except font.FontError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 1
@@ -502,6 +503,8 @@ def main(argv=None) -> int:
     p.add_argument("--ref", required=True, help="the retail font file to start from")
     p.add_argument("--sheets", required=True, help="directory with edited sheet PNGs")
     p.add_argument("--metrics", help="edited metrics CSV")
+    p.add_argument("--allow-unchanged", action="store_true",
+                   help="write a copy of the reference when no sheet or metrics were found (otherwise refused)")
     p.add_argument("--out", required=True, help="font file to write")
     p.set_defaults(func=cmd_font_rebuild)
 

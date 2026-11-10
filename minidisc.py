@@ -27,6 +27,18 @@ import toc                                   # noqa: E402
 from iso9660 import SECTOR                   # noqa: E402
 
 
+# the stand-in boot executable: an ELF header and nothing else. Its hash is registered
+# so that the executable check passes on a mini disc (and on nothing real).
+TEST_ELF = b"\x7fELF\x01\x01" + bytes(58)
+
+
+def register_test_executable() -> None:
+    import hashlib
+
+    import region
+    region.TEST_EXECUTABLES.add(hashlib.sha256(TEST_ELF).hexdigest())
+
+
 def _record(name: bytes, lba: int, size: int, is_dir: bool = False) -> bytes:
     n = len(name)
     rec = bytearray(33 + n + (1 - n % 2))
@@ -82,7 +94,7 @@ def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
     body = b"".join(blobs)
     toc_bytes = toc.serialize(toc_events(rows), toc_sectors)
     cnf = f"BOOT2 = cdrom0:\\{boot};1\r\nVER = 1.00\r\nVMODE = NTSC\r\n".encode("ascii")
-    elf = b"\x7fELF" + bytes(60)
+    elf = TEST_ELF
     root_lba, cnf_lba, elf_lba, toc_lba = 18, 19, 20, 21
     f01_lba = toc_lba + toc_sectors
     f02_lba = f01_lba + len(body) // SECTOR
@@ -156,6 +168,63 @@ def self_test() -> int:
         iso = IsoImage(jp)
         check(region.region_of(iso).name == "jp", "the boot name sets the region")
         iso.close()
+
+        # patch_copy: the source is never written, the output appears only when complete
+        import contextlib
+        import io
+        import os
+
+        from repack import RepackError, patch_copy
+        td = Path(td)
+        src = build(td / "src.iso", files)
+        before = src.read_bytes()
+        edit = {(0, "top.bin"): b"t" * 9}
+
+        def refused(out, **kw):
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    patch_copy(src, out, edit, **kw)
+                return False
+            except (RepackError, region.UnknownBuild, RuntimeError):
+                return True
+
+        os.symlink(src, td / "link.iso")
+        os.link(src, td / "hard.iso")
+        check(refused(src) and refused(td / "link.iso") and refused(td / "hard.iso") and refused(td / "." / "src.iso")
+              and src.read_bytes() == before,
+              "the input image is refused as output: by name, through a symlink, through a hard link")
+        out = td / "out.iso"
+        with contextlib.redirect_stdout(io.StringIO()):
+            patch_copy(src, out, edit)
+        check(read(out, "top.bin") == b"t" * 9 and src.read_bytes() == before and not (td / "out.iso.partial").exists(),
+              "a patched copy is written; the source is untouched; no partial file is left")
+        good = out.read_bytes()
+
+        def boom(tmp):
+            raise RuntimeError("write failed half way")
+
+        check(refused(out, _fail_after_copy=boom) and out.read_bytes() == good
+              and not (td / "out.iso.partial").exists() and src.read_bytes() == before,
+              "a failure in the middle leaves an existing output as it was and removes the partial file")
+        check(refused(td / "new.iso", _fail_after_copy=boom) and not (td / "new.iso").exists(),
+              "... and creates no output when there was none")
+        check(not refused(out) and out.read_bytes() == good, "a second run over an existing output replaces it")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                patch_copy(src, td / "big.iso", {(0, "top.bin"): b"t" * 5000})      # outgrows its slot, no grow
+            check(False, "a refused patch writes nothing")
+        except RepackError:
+            check(not (td / "big.iso").exists() and not (td / "big.iso.partial").exists(), "a refused patch writes nothing")
+        unk = build(td / "unk.iso", {"a.bin": b"1"}, boot="SLES_999.99")
+        iso = IsoImage(unk)
+        check(region.region_of(iso).name == "unknown" and available_chains(iso) == [0], "an unknown serial still lists")
+        iso.close()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                patch_copy(unk, td / "unk_out.iso", {(0, "a.bin"): b"2"})
+            check(False, "an unknown build is not patched")
+        except region.UnknownBuild as e:
+            check("SLES_999.99" in str(e) and not (td / "unk_out.iso").exists(), "an unknown build is not patched; the error names its serial")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

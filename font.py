@@ -317,7 +317,7 @@ class Addressing:
                 va += 2
             else:
                 raise FontError("the extra-kanji list does not end: wrong executable for this profile?")
-        except region.ElfError as e:
+        except (region.ElfError, struct.error) as e:
             raise FontError(f"cannot read the font tables from the executable: {e}")
         if ascii_codes[0] != 0xA1A1 or ascii_codes[ord("A") - 0x20] != 0xA3C1 \
                 or any(not (0xA1 <= c >> 8 <= 0xFE and 0xA1 <= c & 0xFF <= 0xFE) for c in ascii_codes):
@@ -329,8 +329,12 @@ class Addressing:
     @classmethod
     def from_iso(cls, iso) -> "Addressing":
         import region
-        _, elf = region.executable(iso)
-        return cls.from_executable(elf, region.region_of(iso))
+        try:
+            prof = region.require_executable(iso, "reading the font tables")
+            _, elf = region.executable(iso)
+        except (region.UnknownBuild, region.ElfError) as e:
+            raise FontError(str(e))
+        return cls.from_executable(elf, prof)
 
     # -- code -> cell
     def cell(self, lead: int, trail: int) -> int:
@@ -674,15 +678,27 @@ def sheet_to_png(sheet: Sequence[int], width: int = SHEET_W,
 
 def png_to_gray(data: bytes) -> Tuple[int, int, bytearray]:
     """Decode a non-interlaced 8-bit PNG (gray, gray+alpha, RGB, RGBA, or
-    8-bit palette) to (width, height, gray bytes). Enough for edited sheets."""
+    8-bit palette) to (width, height, gray bytes). Enough for edited sheets.
+    Transparency counts as background: a pixel's value is multiplied by its
+    alpha (a transparent pixel is 0, whatever colour is stored under it).
+    Chunk lengths and CRCs are checked."""
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise FontError("not a PNG file")
-    pos, idat, plte = 8, bytearray(), b""
+    pos, idat, plte, trns = 8, bytearray(), b"", b""
     width = height = depth = ctype = 0
+    ended = False
     while pos < len(data):
+        if pos + 12 > len(data):
+            raise FontError("PNG cut off inside a chunk header")
         (ln,) = struct.unpack_from(">I", data, pos)
         tag = data[pos + 4:pos + 8]
         body = data[pos + 8:pos + 8 + ln]
+        if pos + 12 + ln > len(data):
+            raise FontError(f"PNG chunk {tag!r} runs past the end of the file")
+        if struct.unpack_from(">I", data, pos + 8 + ln)[0] != zlib.crc32(tag + body) & 0xFFFFFFFF:
+            raise FontError(f"PNG chunk {tag!r} fails its CRC")
+        if tag == b"tRNS":
+            trns = body
         if tag == b"IHDR":
             width, height, depth, ctype, _, _, inter = struct.unpack(">IIBBBBB", body)
             if depth != 8 or inter:
@@ -692,11 +708,19 @@ def png_to_gray(data: bytes) -> Tuple[int, int, bytearray]:
         elif tag == b"IDAT":
             idat += body
         elif tag == b"IEND":
+            ended = True
             break
         pos += 12 + ln
+    if not ended or not width or ctype not in (0, 2, 3, 4, 6):
+        raise FontError("PNG without IHDR/IEND or of an unsupported colour type")
     bpp = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
-    raw = zlib.decompress(bytes(idat))
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error as e:
+        raise FontError(f"PNG image data does not decompress: {e}")
     stride = width * bpp
+    if len(raw) != height * (stride + 1):
+        raise FontError("PNG image data has the wrong length")
     prev = bytearray(stride)
     gray = bytearray(width * height)
     p = 0
@@ -728,16 +752,21 @@ def png_to_gray(data: bytes) -> Tuple[int, int, bytearray]:
         if ctype == 3:
             for x in range(width):
                 i = line[x] * 3
-                gray[row + x] = (plte[i] * 299 + plte[i + 1] * 587 + plte[i + 2] * 114) // 1000
+                if i + 2 >= len(plte):
+                    raise FontError("PNG palette index out of range")
+                g = (plte[i] * 299 + plte[i + 1] * 587 + plte[i + 2] * 114) // 1000
+                a = trns[line[x]] if line[x] < len(trns) else 255
+                gray[row + x] = g * a // 255
         elif bpp == 1:
             gray[row:row + width] = line
         else:
             for x in range(width):
                 i = x * bpp
                 if bpp == 2:
-                    gray[row + x] = line[i]
+                    gray[row + x] = line[i] * line[i + 1] // 255
                 else:
-                    gray[row + x] = (line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000
+                    g = (line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000
+                    gray[row + x] = g * line[i + 3] // 255 if bpp == 4 else g
         prev = line
     return width, height, gray
 
@@ -779,26 +808,57 @@ def cmd_extract(tex: str, out: str) -> int:
     return 0
 
 
-def cmd_rebuild(ref: str, sheets_dir: str, out: str, metrics_csv: Optional[str]) -> int:
+def cmd_rebuild(ref: str, sheets_dir: str, out: str, metrics_csv: Optional[str],
+                allow_unchanged: bool = False) -> int:
+    """Build a font from the reference file, the sheet PNGs found in ``sheets_dir``
+    (``<ref stem>_sheet0.png`` .. ``_sheet3.png``) and the metrics CSV. Says what
+    was applied. With no sheet found and no metrics given there is nothing to
+    build from, which is refused (a wrong folder, or a renamed reference) unless
+    ``allow_unchanged`` asks for the plain copy. The output may not be the reference."""
+    if Path(out).exists() and os.path.samefile(ref, out) or Path(out).resolve() == Path(ref).resolve():
+        raise FontError(f"--out {out} is the reference file itself; give another name")
     data = Path(ref).read_bytes()
     font = Font.from_bytes(data)
     stem = Path(ref).stem
-    for i in range(4):
-        p = Path(sheets_dir) / f"{stem}_sheet{i}.png"
+    names = [f"{stem}_sheet{i}.png" for i in range(4)]
+    applied, changed_sheets = [], []
+    for i, name in enumerate(names):
+        p = Path(sheets_dir) / name
         if not p.exists():
             continue
         w, h, gray = png_to_gray(p.read_bytes())
         if (w, h) != (SHEET_W, SHEET_H):
             raise FontError(f"{p}: sheet must be {SHEET_W}x{SHEET_H}, got {w}x{h}")
-        font.sheets[i] = quantize(gray)
+        new = quantize(gray)
+        if new != font.sheets[i]:
+            changed_sheets.append(i)
+        font.sheets[i] = new
+        applied.append(i)
+    n_rows = n_changed = 0
     if metrics_csv:
+        seen = set()
         with open(metrics_csv, newline="") as fh:
             for row in csv.DictReader(fh):
-                font.set_metrics(int(row["slot"]), int(row["left"]), int(row["right"]))
+                try:
+                    slot, left, right = int(row["slot"]), int(row["left"]), int(row["right"])
+                except (KeyError, TypeError, ValueError):
+                    raise FontError(f"{metrics_csv}: a row without whole-number slot, left and right: {dict(row)}")
+                if slot in seen:
+                    raise FontError(f"{metrics_csv}: slot {slot} appears twice")
+                seen.add(slot)
+                n_rows += 1
+                n_changed += font.metrics[slot] != (left, right) if 0 <= slot < len(font.metrics) else 0
+                font.set_metrics(slot, left, right)
+    if not applied and not n_rows and not allow_unchanged:
+        raise FontError(f"nothing to apply: none of {', '.join(names)} is in {sheets_dir} and no metrics were "
+                        f"given. The sheet names follow the reference file's name ({Path(ref).name}). "
+                        f"Pass --allow-unchanged to write a plain copy of the reference")
     blob = font.to_bytes()
     if len(blob) != len(data):                      # cannot happen through set_metrics; kept as a guard
         raise FontError(f"rebuilt font is {len(blob)} bytes, the original {len(data)}: the size must not change")
     Path(out).write_bytes(blob)
+    print(f"applied: sheets {applied or 'none'} ({len(changed_sheets)} differ from the reference: "
+          f"{changed_sheets or 'none'}); metrics rows {n_rows} ({n_changed} changed)")
     print(f"wrote {out}" + (" (identical to the reference)" if blob == data else ""))
     return 0
 
@@ -853,7 +913,7 @@ def _synthetic_elf(ascii_va: int, list_va: int, extra: Sequence[Tuple[int, int]]
     for i, (a, b) in enumerate(extra):
         seg[list_va - seg_va + 2 * i:list_va - seg_va + 2 * i + 2] = bytes((a, b))
     head = bytearray(0x34)
-    head[:4] = b"\x7fELF"
+    head[:6] = b"\x7fELF\x01\x01"
     struct.pack_into("<I", head, 0x1C, 0x34)
     struct.pack_into("<HH", head, 0x2A, 32, 1)
     ph = struct.pack("<8I", 1, seg_off, seg_va, seg_va, size, size + 0x100, 6, 0x1000)
@@ -973,6 +1033,65 @@ def self_test() -> int:
         check(False, "the metric table cannot grow")
     except FontError:
         check(True, "the metric table cannot grow")
+
+    # PNG reading: transparency is background, damage is an error
+    def png(ctype, rows, extra=b""):
+        raw = b"".join(b"\x00" + bytes(r) for r in rows)
+        return (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 1, 8, ctype, 0, 0, 0)) + extra
+                + _png_chunk(b"IDAT", zlib.compress(raw)) + _png_chunk(b"IEND", b""))
+
+    check(png_to_gray(png(6, [[255, 255, 255, 0, 255, 255, 255, 255]]))[2] == bytearray((0, 255))
+          and png_to_gray(png(4, [[255, 0, 200, 255]]))[2] == bytearray((0, 200)),
+          "a transparent pixel is background, whatever colour lies under it (RGBA, gray+alpha)")
+    pal = _png_chunk(b"PLTE", bytes((255, 255, 255, 255, 255, 255))) + _png_chunk(b"tRNS", bytes((0,)))
+    check(png_to_gray(png(3, [[0, 1]], pal))[2] == bytearray((0, 255)), "palette transparency (tRNS) too")
+    good = sheet_to_png(g2.sheets[0])
+    for bad, why in ((good[:-20], "cut off"), (good[:40] + bytes((good[40] ^ 1,)) + good[41:], "a flipped bit (CRC)")):
+        try:
+            png_to_gray(bad)
+            check(False, f"a damaged PNG is refused: {why}")
+        except FontError:
+            check(True, f"a damaged PNG is refused: {why}")
+
+    # font-rebuild says what it applied and refuses to apply nothing
+    import contextlib
+    import io
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "font0.us").write_bytes(blob)
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_extract(str(td / "font0.us"), str(td))
+        (td / "copy.us").write_bytes(blob)
+
+        def rebuild(ref, **kw):
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    cmd_rebuild(str(td / ref), str(td), str(td / "out.us"), kw.pop("metrics", None), **kw)
+                return buf.getvalue()
+            except FontError as e:
+                return "REFUSED " + str(e)
+
+        said = rebuild("font0.us")
+        check("sheets [0, 1, 2, 3]" in said and "identical" in said and (td / "out.us").read_bytes() == blob,
+              "font-rebuild of an unedited extract is identical and says four sheets were applied")
+        (td / "out.us").unlink()
+        said = rebuild("copy.us")                   # the sheets are named font0_sheetN.png, not copy_sheetN.png
+        check(said.startswith("REFUSED nothing to apply") and not (td / "out.us").exists(),
+              "font-rebuild refuses when no sheet matches the reference's name and no metrics were given")
+        check("identical" in rebuild("copy.us", allow_unchanged=True), "... unless --allow-unchanged asks for the copy")
+        (td / "m.csv").write_text("slot,left,right\n5,3,9\n")
+        said = rebuild("copy.us", metrics=str(td / "m.csv"))
+        check("metrics rows 1 (1 changed)" in said and Font.load(td / "out.us").metrics[5] == (3, 9),
+              "metrics alone are applied and counted")
+        (td / "m.csv").write_text("slot,left,right\n5,3,9\n5,4,9\n")
+        check("appears twice" in rebuild("copy.us", metrics=str(td / "m.csv")), "a metric slot given twice is refused")
+        try:
+            cmd_rebuild(str(td / "font0.us"), str(td), str(td / "font0.us"), None)
+            check(False, "font-rebuild refuses to overwrite its reference")
+        except FontError:
+            check((td / "font0.us").read_bytes() == blob, "font-rebuild refuses to overwrite its reference")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 
@@ -991,6 +1110,8 @@ def main(argv=None) -> int:
     pr.add_argument("--ref", required=True, help="retail font file to start from")
     pr.add_argument("--sheets", required=True, help="directory with edited sheet PNGs")
     pr.add_argument("--metrics", help="edited metrics CSV (optional)")
+    pr.add_argument("--allow-unchanged", action="store_true",
+                    help="write a copy of the reference when no sheet or metrics were found (otherwise refused)")
     pr.add_argument("--out", required=True)
     pi = sub.add_parser("info")
     pi.add_argument("tex")
@@ -1002,7 +1123,7 @@ def main(argv=None) -> int:
         if a.cmd == "extract":
             return cmd_extract(a.tex, a.out)
         if a.cmd == "rebuild":
-            return cmd_rebuild(a.ref, a.sheets, a.out, a.metrics)
+            return cmd_rebuild(a.ref, a.sheets, a.out, a.metrics, a.allow_unchanged)
         if a.cmd == "table":
             return cmd_table(a.iso, a.out)
         return cmd_info(a.tex)
