@@ -305,21 +305,25 @@ can grow only to the next 64-byte boundary; see MODDING.md.
 raw as `<movie>.ac3`). `.ipu` (90): Sony IPU clips, 256x224/256x256,
 25 fps. `.adx` (657): CRI ADX. ffmpeg reads all three.
 
-## Models: `.pxy`, `.xhr`, `.xap` (notes, not decoded yet)
+## Models: `.pxy`, `.xhr`
 
-`.pxy` header (shion00): magic, float version 0.15, u32 flags, u32 size,
-name[32], then counts and offsets: 23 materials (0x60 records at 0x4F0,
-Maya names `lambert88`...; word +0x28 >> 16 is the `.txy` entry index of the
-material's texture, which is the material-to-texture link Episode III's kit
-lacks), 10 nodes (0x70 records at 0xD90: name, then a byte list of joint
-indices = the mesh's skinning palette), node matrices at 0x11F0/0x25B0/0x3970,
-a draw list at 0x3C9E0 `{VIF offset, qword count, material?, ..., bounding
-sphere}`, and the geometry: a VIF stream (0x3BF0 to 0x3C9E0 here) of 221
-`STCYCL` + `UNPACK` + `MSCNT` batches with V4-32 (positions/normals), V2-32
-(UVs) and V4-8 (colours or weights) unpacks; it walks to the exact start of
-the next table. `.xhr` 2.3/2.4: 85 joints in shion00, names with `|`
-separators (`Jseb`, `Jkata_L`, `Jhead`). `.xap` 1.2 and `.fap` 1.2: motion
-and face motion, offset tables, not decoded.
+Decoded: [MODELS.md](MODELS.md) has the byte layouts, how each field was
+proven (the address in the executable or VU1 program, or the numeric test over
+all 944 files) and what is still unknown. In short: a `.pxy` holds material
+and node records, a draw list, and a raw VIF1 stream of `STCYCL` + `UNPACK` +
+`MSCNT` batches of up to 30 vertices (positions with S in w, normals with T in
+w and a strip-restart bit, colour bytes, weights, joint-palette bytes); a
+material's texture is named by the TEX0 register inside its batch, not by a
+header word; a `.xhr` is six runs of joint transforms with no names.
+
+Earlier notes here were wrong on four points, corrected in MODELS.md: the
+header word +0x28 is the record's own index, not a texture index; the "joint
+names" in `.xhr` are uninitialised padding; V4-8 unpacks are colours and
+palette bytes, while weights are V2-32 or V4-32; and UVs ride in the w of
+positions and normals, not in a V2-32 unpack.
+
+`.xap` 1.2 and `.fap` 1.2 (motion and face motion) are offset tables, not
+decoded.
 
 ## Small side files
 

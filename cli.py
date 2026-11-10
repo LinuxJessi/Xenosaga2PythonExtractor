@@ -10,7 +10,7 @@ Usage:
     python cli.py dump    --iso DISC1.iso [--iso DISC2.iso] --out OUT
                           [--chain N] [--glob 'model\\char\\pc\\*'] [--raw] [--code]
     python cli.py verify  --out OUT
-    python cli.py browse  --out OUT [--kinds textures,xtx,fonts,text,scripts,audio,music,images,movies]
+    python cli.py browse  --out OUT [--kinds textures,models,xtx,fonts,text,scripts,audio,music,images,movies,small]
     python cli.py sb      --iso DISC.iso --path 'cf\\sc1010.sb'      (disassemble one script)
     python cli.py text-export --iso DISC.iso --out TEXTDIR
     python cli.py dialogue --iso DISC1.iso [--iso DISC2.iso] --out DIR [--voice]
@@ -191,6 +191,49 @@ def cmd_browse(args) -> int:
     return build_browse(Path(args.out), kinds, limit=args.limit, movie_audio=args.movie_audio)
 
 
+def cmd_model(args) -> int:
+    """One model straight from the disc to a .glb: the .pxy mesh with the texture pages
+    (.txy) and skeleton (.xhr) of the same name."""
+    import pxy
+    import txy
+    import xhr
+
+    want = args.path.lower()
+    stem = want[:-4] if want.endswith(".pxy") else want
+    for chain, iso in sorted(_sources([args.iso]).items()):
+        reader, entries = _entries(iso, chain)
+        byp = {e.path.lower(): e for e in entries}
+        e = byp.get(stem + ".pxy")
+        if e is None:
+            continue
+        read = lambda ent: reader.read(ent.byte_offset, ent.size)
+        mesh = pxy.parse(read(e))
+        t, x = byp.get(stem + ".txy"), byp.get(stem + ".xhr")
+        txy_data = read(t) if t else None
+        try:
+            tex_entries = txy.parse(txy_data)["entries"] if txy_data else None
+        except Exception:
+            txy_data = tex_entries = None
+        skel = xhr.parse(read(x)) if x else None
+        r = pxy.check(mesh, tex_entries)
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            blob = pxy.to_glb(mesh, txy_data, skel)
+        except pxy.PxyError as err:                  # skeleton shorter than the mesh's joint list
+            if skel is None:
+                raise
+            print(f"skeleton not used: {err}", file=sys.stderr)
+            blob, skel = pxy.to_glb(mesh, txy_data, None), None
+        out.write_bytes(blob)
+        print(f"{e.path}: {r.get('triangles', '?')} triangles, textures {'yes' if txy_data else 'no'}, "
+              f"skeleton {'yes' if skel else 'no'}, checks "
+              f"{'all pass' if not r['failed'] else 'FAILED: ' + '; '.join(r['failed'])} -> {out}")
+        return 0
+    print(f"{args.path}: no such .pxy on this disc (see `list`)", file=sys.stderr)
+    return 1
+
+
 def cmd_sb(args) -> int:
     import sb
     import sbl
@@ -346,7 +389,7 @@ def cmd_font_rebuild(args) -> int:
 
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
-              "minidisc", "moviesub", "textpack")
+              "minidisc", "moviesub", "textpack", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
 
 
 def cmd_self_test(args) -> int:
@@ -362,7 +405,7 @@ def cmd_self_test(args) -> int:
             rc |= 1
             continue
         print(f"--- {name}")
-        rc |= mod.self_test()
+        rc |= mod.self_test() or 0
     return rc
 
 
@@ -398,6 +441,12 @@ def main(argv=None) -> int:
     p.add_argument("--movie-audio", choices=("adx", "ac3", "both"), default="adx",
                    help="movies: ADX stereo as AAC (default), the AC3 5.1 track copied, or both tracks")
     p.set_defaults(func=cmd_browse)
+
+    p = sub.add_parser("model", help="one model from the disc to a .glb for Blender (browse does them all)")
+    p.add_argument("--iso", required=True)
+    p.add_argument("--path", required=True, help="e.g. 'model\\char\\pc\\kosmos00.pxy'")
+    p.add_argument("--out", required=True, help="the .glb to write")
+    p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("sb", help="disassemble one script, dialogue inline")
     p.add_argument("--iso", required=True)

@@ -54,6 +54,7 @@ zeros, `16m.bin`.
 
 | Folder | Made by | What you get |
 |---|---|---|
+| `models/` | `--kinds models` | every `.pxy` as a `.glb` for Blender (944 on Disc 1, about a minute), with `models.csv` saying for each file whether it had textures and a skeleton, its triangle count and whether every numeric check passed |
 | `textures_png/` | `--kinds textures` | every `.txy` page as named PNGs (`shion00_hair`, `kosmos00_face`): 65,938 from 941 files; texture pages found inside effect files under `_embedded/` |
 | `xtx/` | `xtx` | the 85 UI sheets |
 | `fonts/` | `fonts` | the four glyph sheets of each font + metrics |

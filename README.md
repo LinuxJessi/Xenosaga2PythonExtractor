@@ -3,7 +3,8 @@
 Unpack, browse and edit **Xenosaga Episode II: Jenseits von Gut und Böse**
 (PS2, USA, SLUS-20892 / SLUS-21133) with Python and numpy. Point it at your
 own disc images and you get the game's files in forms your computer opens:
-textures as PNG, sound effects and samples as WAV, the field music as MIDI
+textures as PNG, **every model as a glTF file Blender opens, textured and
+rigged**, sound effects and samples as WAV, the field music as MIDI
 with a SoundFont made from the game's own instruments and a WAV rendered the
 way the PS2 plays it, dialogue as UTF-8 text you can edit and write back,
 the scene scripts as readable assembly with the lines they speak, cutscenes
@@ -82,6 +83,7 @@ on their own. `python build.py` makes a standalone app with PyInstaller
 
 | | |
 |---|---|
+| Models | all 944 `.pxy` meshes on Disc 1 as `.glb`: mesh, UVs, textures inside the file, vertex colours, skin weights and, for the 562 with a usable skeleton file, an armature whose bones sit on the mesh. `browse` writes them all; `model` does one straight from the disc ([docs/BLENDER.md](docs/BLENDER.md), [docs/MODELS.md](docs/MODELS.md)) |
 | Textures | every `.txy` page: 65,938 PNGs, named the way the artists named them (`shion00_hair`, `kosmos00_face`), skybox faces and animated pages one per bank; plus 1,333 more from the pages inside effect files (`textures_png/_embedded/`) |
 | UI sheets | the 85 `.xtx` sheets: citizen portraits, item icons, the title menu words |
 | Fonts | the four glyph sheets of each font, plus the proportional metrics |
@@ -133,8 +135,12 @@ Changes: [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Still open
 
-* Models: `.pxy` geometry is a VIF stream the kit can walk but not yet turn
-  into meshes; skeletons (`.xhr`) and motion (`.xap`) are not decoded.
+* Models: motion (`.xap`, `.fap`) is not decoded, so bones pose but nothing
+  plays. Faces are oriented by their normals and materials are double-sided,
+  because about one triangle in thirty is stored facing the other way.
+  Fifteen skeletons differ from their mesh's bind pose on some joints. Whether
+  models come out mirrored, the colour scale and the alpha modes have not
+  been checked against the running game ([docs/BLENDER.md](docs/BLENDER.md)).
 * Two multi-palette menu sheets (`yosikawa\obj01.xtx`, `ctrl01.xtx`).
 * Music: the renders follow the driver and the SPU2 and sit close to a game
   rip on the five songs compared, but portamento, the pitch envelope, the

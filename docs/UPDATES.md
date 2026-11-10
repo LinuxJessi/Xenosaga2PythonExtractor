@@ -1,5 +1,17 @@
 # Updates
 
+## 2026-11-10: models open in Blender
+
+`browse` now writes every `.pxy` model as a `.glb` (`--kinds models`, on by
+default): mesh, UVs, textures inside the file, vertex colours, skin weights
+and an armature from the `.xhr` skeleton. All 944 models of Disc 1 are
+written in about a minute; 943 pass every numeric check (unit normals,
+weights summing to one, indices in range, vertices inside their bounds, the
+triangle count the file itself records). `model` exports one straight from
+the disc. The layout was read from the game's VU1 microcode, not guessed from
+the data. Motion is not decoded. [BLENDER.md](BLENDER.md),
+[MODELS.md](MODELS.md).
+
 ## 2026-11-10: menus, subtitles, quest text and battle names in `text-export` / `text-import`
 
 * Four more kinds of text, each exact both ways on every disc (an unedited

@@ -32,7 +32,7 @@ from typing import Dict, Iterable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-ALL_KINDS = ("textures", "xtx", "fonts", "text", "scripts", "audio", "music", "images", "movies", "small")
+ALL_KINDS = ("textures", "models", "xtx", "fonts", "text", "scripts", "audio", "music", "images", "movies", "small")
 
 
 def _rows(out: Path) -> List[dict]:
@@ -174,6 +174,73 @@ def browse_xtx(out: Path, rows, limit) -> None:
         results = list(ex.map(_one_xtx, jobs))
     _write_csv(out / "browse" / "xtx.csv", results)
     print(f"xtx: {sum(r['status'] == 'ok' for r in results)}/{len(jobs)} sheets", file=sys.stderr)
+
+
+# ------------------------------------------------------------------ models
+
+def _one_model(args) -> dict:
+    """One .pxy mesh, with the texture pages (.txy) and skeleton (.xhr) of the same name
+    beside it, to a .glb Blender opens: mesh, UVs, textures, vertex colours, skin weights
+    and an armature. A file the decoder does not understand is reported, never guessed at;
+    one that decodes but fails a numeric check is still written and says which check."""
+    src, dest, path = args
+    import pxy
+    import txy
+    import xhr
+    from vif import VifError
+
+    src = Path(src)
+    row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "status": ""}
+    try:
+        p = pxy.parse(src.read_bytes())
+        txy_data = entries = skel = None
+        tsrc, xsrc = src.with_suffix(".txy"), src.with_suffix(".xhr")
+        if tsrc.is_file():
+            try:
+                txy_data = tsrc.read_bytes()
+                entries = txy.parse(txy_data)["entries"]
+                row["textures"] = tsrc.name
+            except Exception as e:                   # a JPEG or placeholder named .txy: export untextured
+                txy_data = entries = None
+                row["textures"] = f"unreadable ({type(e).__name__})"
+        if xsrc.is_file():
+            try:
+                skel = xhr.parse(xsrc.read_bytes())
+                row["skeleton"] = xsrc.name
+            except xhr.XhrError as e:
+                row["skeleton"] = f"unreadable ({e})"
+        r = pxy.check(p, entries)
+        row["triangles"] = r.get("triangles", "")
+        row["checks"] = "all pass" if not r["failed"] else "; ".join(r["failed"])
+        try:
+            blob = pxy.to_glb(p, txy_data, skel)
+        except pxy.PxyError as e:
+            if skel is None:
+                raise
+            # a skeleton file with fewer transforms than the mesh has joints: the mesh
+            # is still right, so it is written with its joints left where the file binds them
+            row["skeleton"] = f"not used ({e})"
+            blob = pxy.to_glb(p, txy_data, None)
+    except (pxy.PxyError, VifError, xhr.XhrError) as e:
+        row["status"] = f"not decoded: {e}"
+        return row
+    Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    Path(dest).write_bytes(blob)
+    row["status"] = "ok" if row["checks"] == "all pass" else "written, a check failed"
+    return row
+
+
+def browse_models(out: Path, rows, limit) -> None:
+    jobs = [(str(_src(out, r)), str(_dest(out, "models", r).with_suffix(".glb")), r["path"])
+            for r in rows if r["kind"] == "pxy" or r["path"].lower().endswith(".pxy")]
+    jobs = jobs[:limit] if limit else jobs
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
+        results = list(ex.map(_one_model, jobs, chunksize=4))
+    _write_csv(out / "browse" / "models.csv", results)
+    ok = sum(r["status"] == "ok" for r in results)
+    flagged = sum(r["status"].startswith("written") for r in results)
+    print(f"models: {ok + flagged}/{len(jobs)} .glb written ({flagged} with a failed check, "
+          f"{len(jobs) - ok - flagged} not decoded; see browse/models.csv)", file=sys.stderr)
 
 
 # ------------------------------------------------------------------- fonts
@@ -441,7 +508,7 @@ def browse_small(out: Path, rows, limit) -> None:
     smallfiles.browse_small(out, rows, limit)
 
 
-BUILDERS = {"textures": browse_textures, "xtx": browse_xtx, "fonts": browse_fonts, "text": browse_text,
+BUILDERS = {"textures": browse_textures, "models": browse_models, "xtx": browse_xtx, "fonts": browse_fonts, "text": browse_text,
             "scripts": browse_scripts,
             "audio": browse_audio, "music": browse_music, "images": browse_images, "movies": browse_movies,
             "small": browse_small}
