@@ -69,7 +69,10 @@ class Material(object):
         self.name = _cstr(rec[:0x20])
         self.flags = w[0]
         self.shader = w[1]
-        self.texture = w[2] >> 16          # .txy entry index
+        # +0x28 high half: the record's own index in 52,761 of the
+        # disc's 52,819 records (it is NOT a .txy entry index: textures
+        # are found through TEX0, see link_textures)
+        self.ordinal = w[2] >> 16
         self.word28_low = w[2] & 0xFFFF
         self.sw, self.tw = f[9], f[11]
         self.words = w
@@ -94,6 +97,9 @@ class Item(object):
         self.draw = w[1] & 0xFFFF
         self.node = w[4] & 0xFFFF
         self.flags = w[6]
+        # +0x1C: 0 = drawn two-sided, 1 / 2-3 = back faces culled with
+        # opposite signs (FUN_001ce4c4 sends it to VU address 0x3C6)
+        self.cull, = struct.unpack_from("<b", rec, 0x1C)
         f = struct.unpack_from("<16f", rec, 0x20)
         self.bbox_min = np.array(f[0:3])
         self.bbox_max = np.array(f[4:7])
@@ -429,6 +435,15 @@ def batch_joints(p, node, b):
     return jm, w
 
 
+def _signed(v):
+    return v - (1 << 32) if v >> 31 else v
+
+
+def _size_ok(m, e):
+    return abs(m.sw * m.tex_w - _signed(e["w"])) < 1e-3 and \
+        abs(m.tw * m.tex_h - _signed(e["h"])) < 1e-3
+
+
 def link_textures(p, txy_entries):
     """Attach the .txy entry to every material batch by its TEX0 address.
     Returns the number of textured batches left without an entry."""
@@ -440,11 +455,13 @@ def link_textures(p, txy_entries):
         for m in d.materials:
             if not m.textured:
                 continue
-            cands = by_addr.get(m.tbp0 - GS_TEXTURE_BASE, [])
-            best = [e for e in cands if e["fmt"] == m.psm
-                    and e["cbp"] == m.cbp - GS_TEXTURE_BASE]
-            best = best or [e for e in cands if e["fmt"] == m.psm]
-            m.txy_entry = best[0] if best else None
+            cands = [e for e in by_addr.get(m.tbp0 - GS_TEXTURE_BASE, [])
+                     if e["fmt"] == m.psm]
+            # several entries can share an address (other banks, other
+            # palettes): prefer the one whose size and CLUT also agree
+            cands.sort(key=lambda e: (not _size_ok(m, e),
+                                      e["cbp"] != m.cbp - GS_TEXTURE_BASE))
+            m.txy_entry = cands[0] if cands else None
             missing += m.txy_entry is None
     return missing
 
@@ -462,6 +479,8 @@ def check(p, txy_entries=None):
     nrm_n = 0
     skin_static = 0
     no_material = 0
+    unbound = 0
+    strips_n = strips_same = 0
     for d in p.draws:
         allpos = []
         for b in d.batches:
@@ -480,7 +499,11 @@ def check(p, txy_entries=None):
                     raise PxyError("skinned draw %d has no item" % d.index)
                 jm, w = batch_joints(p, d.node, b)
                 n_w += b.n
-                bad_wsum += int((np.abs(w.sum(axis=1) - 1) > 2e-3).sum())
+                ws = w.sum(axis=1)
+                # a rigid vertex whose byte is 255 is left unskinned
+                free = (ws == 0) if b.skin_mode == 2 else np.zeros(b.n, bool)
+                unbound += int(free.sum())
+                bad_wsum += int(((np.abs(ws - 1) > 2e-3) & ~free).sum())
                 if (w < -1e-6).any():
                     r["failed"].append("negative weight")
                 if not np.allclose(p.node_mats[d.node], IDENT, atol=1e-6):
@@ -499,9 +522,22 @@ def check(p, txy_entries=None):
                 gl = np.linalg.norm(g, axis=1)
                 ok = gl > 1e-12
                 vn = b.nrm[tris].sum(axis=1)
-                dv = (g * vn).sum(axis=1)[ok]
+                dall = (g * vn).sum(axis=1)
+                dv = dall[ok]
                 wind_n += int(ok.sum())
                 wind_ok += int((dv > 0).sum())
+                # within one strip every triangle must face the same way
+                # relative to the normals (tests the alternation rule,
+                # whatever way the strip as a whole was authored)
+                start = np.maximum.accumulate(np.where(b.adc,
+                                                       np.arange(b.n), 0))
+                sid = start[tris[:, 2]][ok]
+                front = dv > 0
+                for s0 in np.unique(sid):
+                    fr = front[sid == s0]
+                    if len(fr) > 1:
+                        strips_n += 1
+                        strips_same += bool(fr.all() or not fr.any())
                 if b.face is not None:
                     df = (g[ok] / gl[ok, None] * b.face[tris[:, 2]][ok]).sum(
                         axis=1)
@@ -523,7 +559,9 @@ def check(p, txy_entries=None):
              uv_vertices=uv_n, uv_in_0_1=uv_in01, uv_in_m1_1=uv_in11,
              uv_abs_max=uv_max, bbox_tested=box_n, bbox_outside=box_out,
              sphere_outside=sphere_out, skinned_under_moved_node=skin_static,
-             batches_without_material=no_material)
+             batches_without_material=no_material,
+             rigid_vertices_unbound=unbound, strips_tested=strips_n,
+             strips_one_facing=strips_same)
     if r["triangles"] != p.triangle_count:
         r["failed"].append("triangle count %d != header %d"
                            % (r["triangles"], p.triangle_count))
@@ -537,9 +575,12 @@ def check(p, txy_entries=None):
     if nrm_n and bad_unit > 0.01 * nrm_n:
         r["failed"].append("%d of %d normals not unit length"
                            % (bad_unit, nrm_n))
-    if wind_n and wind_ok < 0.9 * wind_n:
-        r["failed"].append("winding agrees with normals on only %d of %d"
-                           % (wind_ok, wind_n))
+    if strips_n and strips_same < 0.9 * strips_n:
+        r["failed"].append("only %d of %d strips face one way"
+                           % (strips_same, strips_n))
+    if no_material:
+        r["failed"].append("%d mesh batches precede any material batch"
+                           % no_material)
     if skin_static:
         r["failed"].append("skinned batch under a non-identity node matrix")
     if (p.flags & 1) and any(b.skin_mode for d in p.draws for b in d.batches):
@@ -553,9 +594,7 @@ def check(p, txy_entries=None):
             e = m.txy_entry
             if e is None:
                 continue
-            w = e["w"] - (1 << 32) if e["w"] >> 31 else e["w"]
-            hgt = e["h"] - (1 << 32) if e["h"] >> 31 else e["h"]
-            if abs(m.sw * m.tex_w - w) > 1e-3 or abs(m.tw * m.tex_h - hgt) > 1e-3:
+            if not _size_ok(m, e):
                 size_bad += 1
         r["texture_unlinked"] = miss
         r["texture_size_mismatch"] = size_bad
@@ -588,52 +627,57 @@ def _alpha_mode(d):
     return "OPAQUE"
 
 
+def referenced_joints(p):
+    """Joint-matrix indices that at least one vertex is bound to."""
+    used = set()
+    for d in p.draws:
+        for b in d.batches:
+            if b.skin_mode:
+                jm, w = batch_joints(p, d.node, b)
+                used.update(int(v) for v in np.unique(jm[w > 0]))
+    return used
+
+
 def skeleton_from(p, x):
     """Bind skeleton for glTF.  Returns (parents, world matrices
-    (row-vector), notes).  One entry per .xhr transform when `x` is given
-    (the mesh's joint matrix j is transform j + 2), else one per joint
-    matrix under a single root.
+    (row-vector), inverse bind matrices per joint matrix, notes).  One
+    transform per .xhr record when `x` is given (the mesh's joint matrix j
+    is transform j + 2), else one per joint matrix under a single root.
 
-    The world matrix of a skinned transform is the inverse of the mesh's
-    own inverse bind matrix, so the rest pose reproduces the mesh exactly
-    whatever the .xhr rest values are; the .xhr supplies the parents and
-    the transforms the mesh does not skin to."""
+    For a joint some vertex is bound to, the world matrix is the inverse
+    of the mesh's own inverse bind matrix, so the rest pose reproduces the
+    mesh exactly whatever the .xhr rest values say.  Every other transform
+    keeps its .xhr rest matrix (and its glTF inverse bind matrix is the
+    inverse of that): the mesh files carry inverse bind matrices that no
+    vertex uses and that do not belong to the transform at their index."""
     n_j = p.n_joint_matrices
     bind = np.stack([np.linalg.inv(m) for m in p.inv_bind]) if n_j else \
         np.zeros((0, 4, 4))
     notes = {}
     if x is None:
-        return [-1] * n_j, bind, notes
+        return [-1] * n_j, bind, p.inv_bind.copy(), notes
     if len(x.joints) < n_j + 2:
         raise PxyError("skeleton has %d transforms, mesh needs %d"
                        % (len(x.joints), n_j + 2))
-    rest = x.world_matrices()
-    world = rest.copy()
+    used = referenced_joints(p)
+    world = x.world_matrices()
     parents = [j.parent for j in x.joints]
-    err = np.abs(rest[2:2 + n_j] - bind).reshape(n_j, -1).max(axis=1) \
-        if n_j else np.zeros(0)
-    off = [int(i) + 2 for i in np.nonzero(err > 1e-3)[0]]
-    world[2:2 + n_j] = bind
-    # a transform whose .xhr rest matrix is not this joint's bind matrix
-    # but exactly another joint's: the records of the simulated run are
-    # stored in another order than the mesh's joint matrices.  Take the
-    # parent from the record that matches.
-    remap = {}
-    for i in off:
-        d = np.abs(rest[2:2 + n_j] - bind[i - 2]).reshape(n_j, -1).max(axis=1)
-        k = int(d.argmin())
-        if d[k] < 1e-3:
-            remap[i] = k + 2
-    inv = {v: k for k, v in remap.items()}     # record -> transform
-    if len(inv) == len(remap):
-        for i, rec in remap.items():
-            pr = x.joints[rec].parent
-            parents[i] = inv.get(pr, pr)
-    else:
-        remap = {}
-    notes["rest_differs"] = [i for i in off if i not in remap]
-    notes["record_of_transform"] = remap
-    return parents, world, notes
+    inv = p.inv_bind.copy()
+    differs = []
+    unused_differs = []
+    for j in range(n_j):
+        err = float(np.abs(world[j + 2] - bind[j]).max())
+        if j in used:
+            if err > 1e-3:
+                differs.append(j + 2)
+            world[j + 2] = bind[j]
+        else:
+            if err > 1e-3:
+                unused_differs.append(j + 2)
+            inv[j] = np.linalg.inv(world[j + 2])
+    notes["rest_differs"] = differs
+    notes["unused_bind_differs"] = unused_differs
+    return parents, world, inv, notes
 
 
 def to_glb(p, txy_data=None, x=None, name=None):
@@ -661,9 +705,6 @@ def to_glb(p, txy_data=None, x=None, name=None):
                   sorted(pngs.items())}
     else:
         images = {}
-    by_tex = {}
-    for m in p.materials:
-        by_tex.setdefault(m.texture, m)
     mat_index = {}
 
     def material(d, st):
@@ -679,8 +720,7 @@ def to_glb(p, txy_data=None, x=None, name=None):
                       "clamp": "%016x" % st.clamp}
             e = st.txy_entry
             if e is not None:
-                rec = by_tex.get(e["i"])
-                nm = "%s_%s" % (rec.name if rec else "mat", e["name"])
+                nm = "%s_s%d" % (e["name"], st.shader)
                 if e["i"] in images:
                     wrap = {0: gltf.REPEAT, 1: gltf.CLAMP_TO_EDGE,
                             2: gltf.CLAMP_TO_EDGE, 3: gltf.REPEAT}
@@ -700,13 +740,15 @@ def to_glb(p, txy_data=None, x=None, name=None):
     skin = None
     root_joint = None
     if skinned:
-        parents, world, notes = skeleton_from(p, x)
+        parents, world, inv_bind, notes = skeleton_from(p, x)
         if notes.get("rest_differs"):
             warnings.append("xhr rest pose differs from the bind pose at "
-                            "transforms %r" % notes["rest_differs"])
-        if notes.get("record_of_transform"):
-            warnings.append("xhr records matched to joints by bind matrix: "
-                            "%r" % notes["record_of_transform"])
+                            "transforms %r (bind pose used)"
+                            % notes["rest_differs"])
+        if notes.get("unused_bind_differs"):
+            warnings.append("inverse bind matrices no vertex uses do not "
+                            "match the xhr at transforms %r (xhr used)"
+                            % notes["unused_bind_differs"])
         n_t = len(parents)
         first = len(g.nodes)
         base = 0 if x is not None else None
@@ -722,7 +764,7 @@ def to_glb(p, txy_data=None, x=None, name=None):
                         first + i)
         joff = 2 if x is not None else 0
         joint_nodes = [first + j + joff for j in range(p.n_joint_matrices)]
-        ibm = [m.T for m in p.inv_bind]
+        ibm = [m.T for m in inv_bind]
         joint_nodes.append(root_joint)          # for unskinned batches
         ibm.append(IDENT)
         skin = g.add_skin(p.name or "skin", joint_nodes, ibm, root_joint)
@@ -762,9 +804,12 @@ def to_glb(p, txy_data=None, x=None, name=None):
                 if skinned:
                     if b.skin_mode:
                         jm, w = batch_joints(p, node_i, b)
-                        w = w / np.where(w.sum(axis=1, keepdims=True) == 0, 1,
-                                         w.sum(axis=1, keepdims=True))
+                        ws = w.sum(axis=1, keepdims=True)
+                        w = w / np.where(ws == 0, 1, ws)
                         jm = np.where(w > 0, jm, 0)
+                        free = ws[:, 0] == 0        # rigid, byte 255
+                        jm[free, 0] = p.n_joint_matrices
+                        w[free, 0] = 1.0
                     else:
                         jm = np.zeros((b.n, 4), dtype=np.int64)
                         jm[:, 0] = p.n_joint_matrices
@@ -773,7 +818,16 @@ def to_glb(p, txy_data=None, x=None, name=None):
                     J.append(jm)
                     W.append(w)
                     node_skinned = True
-                IDX.append(b.triangles() + base)
+                tris = b.triangles()
+                if len(tris):
+                    # the engine draws these two-sided and the strips'
+                    # facing is not reliable (see docs/MODELS.md): turn
+                    # each triangle to face along its vertex normals
+                    gn = np.cross(b.pos[tris[:, 1]] - b.pos[tris[:, 0]],
+                                  b.pos[tris[:, 2]] - b.pos[tris[:, 0]])
+                    back = (gn * b.nrm[tris].sum(axis=1)).sum(axis=1) < 0
+                    tris[back] = tris[back][:, [1, 0, 2]]
+                IDX.append(tris + base)
                 base += b.n
             idx = np.concatenate(IDX)
             if not len(idx):
@@ -838,7 +892,8 @@ def _synthetic(skinned=True, n_joint=3):
            struct.pack("<IIIf", 0x8007, 0x10000000, 0xE, tw),
            struct.pack("<QQ", tex0, 0), bytes(16),
            struct.pack("<QQ", 0x1F0003FF, 0)] + [bytes(16)] * 12
-    stream = stcycl + unpack("V4-32", 0, mat) + mscnt
+    mat_batch = stcycl + unpack("V4-32", 0, mat) + mscnt
+    stream = mat_batch
     # a quad as one strip, then a restart and a second quad
     quad = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)]
     pts = quad + [(x + 2, y, 0) for x, y, _ in quad]
@@ -868,7 +923,7 @@ def _synthetic(skinned=True, n_joint=3):
     if skinned:
         tri += unpack("V4-8", 16, [bytes(bytearray([8, 255, 255, 255]))] * 3)
     d0 = stream + b"\0" * (-len(stream) % 16)
-    d1 = stcycl + tri + mscnt
+    d1 = mat_batch + stcycl + tri + mscnt
     d1 += b"\0" * (-len(d1) % 16)
     n_j = n_joint if skinned else 0
     rng = np.random.RandomState(3)
@@ -933,7 +988,7 @@ def self_test():
     data, pts, uvs, bind, entries = _synthetic(True)
     p = parse(data)
     assert p.name == "synth" and len(p.draws) == 2 and len(p.materials) == 1
-    assert p.materials[0].texture == 5 and p.nodes[0].palette == [1, 2, 3]
+    assert p.materials[0].ordinal == 5 and p.nodes[0].palette == [1, 2, 3]
     b = p.draws[0].batches[0]
     assert b.n == 8 and b.per_vertex_color and b.skin_mode == 4
     assert np.allclose(b.pos, pts)
@@ -951,8 +1006,9 @@ def self_test():
     r = check(p, entries)
     assert not r["failed"], r["failed"]
     assert r["triangles"] == 5 and r["winding_agree"] == r["winding_tested"] == 5
-    assert r["uv_vertices"] == 8 and r["uv_in_0_1"] == 6       # u = 1.5 twice
-    assert r["batches_without_material"] == 1    # the second draw has none
+    assert r["uv_vertices"] == 11 and r["uv_in_0_1"] == 9      # u = 1.5 twice
+    assert r["batches_without_material"] == 0
+    assert r["strips_tested"] == 2 and r["strips_one_facing"] == 2
     assert abs(r["uv_abs_max"] - 1.5) < 1e-6
     # the skinned GLB, read back, must give the static mesh in rest pose
     glb = to_glb(p)
@@ -1033,10 +1089,18 @@ def main(argv=None):
             print("  %-26s %s" % (k, r[k]))
     print("  invariants: %s" % ("all pass" if not r["failed"]
                                 else "; ".join(r["failed"])))
-    if x is not None and p.n_joint_matrices:
-        import xhr
-        print("  xhr rest pose vs bind matrices: max |invBind*world - I| = "
-              "%.3g" % xhr.bind_error(x, p.inv_bind))
+    if x is not None and p.n_joint_matrices \
+            and len(x.joints) >= p.n_joint_matrices + 2:
+        used = referenced_joints(p)
+        w = x.world_matrices()
+        n = p.n_joint_matrices
+        e = np.abs(np.einsum("nij,njk->nik", p.inv_bind, w[2:2 + n])
+                   - IDENT).reshape(n, -1).max(axis=1)
+        print("  xhr rest pose vs bind pose, max |invBind*world - I|: %.3g "
+              "over the %d joints vertices use, %.3g over the other %d"
+              % (max([e[j] for j in used] or [0]), len(used),
+                 max([e[j] for j in range(n) if j not in used] or [0]),
+                 n - len(used)))
     if a.glb:
         blob = to_glb(p, txy_data, x)
         with open(a.glb, "wb") as f:
