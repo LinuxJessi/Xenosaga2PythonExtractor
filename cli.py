@@ -14,7 +14,7 @@ Usage:
     python cli.py sb      --iso DISC.iso --path 'cf\\sc1010.sb'      (disassemble one script)
     python cli.py text-export --iso DISC.iso --out TEXTDIR
     python cli.py dialogue --iso DISC1.iso [--iso DISC2.iso] --out DIR [--voice]
-    python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso
+    python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso [--grow]
     python cli.py font-extract --iso DISC.iso --out FONTDIR
     python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
@@ -279,7 +279,7 @@ def cmd_text_export(args) -> int:
 def cmd_text_import(args) -> int:
     from textpack import import_text
 
-    return import_text(args.iso, args.text, args.out)
+    return import_text(args.iso, args.text, args.out, grow=args.grow)
 
 
 def cmd_dialogue(args) -> int:
@@ -345,7 +345,8 @@ def cmd_font_rebuild(args) -> int:
 
 
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
-              "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue")
+              "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
+              "minidisc", "textpack")
 
 
 def cmd_self_test(args) -> int:
@@ -438,6 +439,9 @@ def main(argv=None) -> int:
     p.add_argument("--iso", required=True)
     p.add_argument("--text", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--grow", action="store_true",
+                   help="relocate a text bank that outgrows its slot to the end of the image, within "
+                        "the room the game's loader has (read from code; not yet seen in the running game)")
     p.set_defaults(func=cmd_text_import)
 
     p = sub.add_parser("font-extract", help="the fonts as PNG sheets + metrics CSV + the byte-to-cell table")

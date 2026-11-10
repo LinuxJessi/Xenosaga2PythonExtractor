@@ -1,5 +1,15 @@
 # Updates
 
+## 2026-11-10: text banks may grow (`text-import --grow`)
+
+* The two `.sbl` loaders were read: both load script and bank into one
+  buffer of fixed size (scenes 0x20000 bytes at 0x3C6DC0, maps 0x12000). A
+  bank may be relocated when it outgrows its slot, but never past its
+  script's buffer; `text-import` enforces that. Not yet seen in the running
+  game. See MODDING.md.
+* `minidisc.py` builds a small disc image in code, so `textpack` now has an
+  end-to-end self-test.
+
 ## 2026-11-10: fonts
 
 * **Episode II addressing in `font.py`** (`Addressing`, `xs2_cell`), read

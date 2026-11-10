@@ -62,6 +62,59 @@ Models live in chain 0, which is on both discs: patch each disc you play.
 See the README. Banks are rebuilt whole, so lines may grow or shrink inside
 the bank's slot; an import that would not fit is refused as a whole.
 
+### Growing a text bank: `text-import --grow` (not yet seen in game)
+
+**Status: read from the code and exercised on disc images. NOT YET SEEN IN
+THE RUNNING GAME.** With `--grow`, a `.sbl` that outgrows its slot is appended
+to the image and its TOC entry repointed (the same mechanism as `patch
+--grow`, which the game followed for a movie subtitle file, below).
+
+Whether a larger bank is safe to load was read from the USA executable
+(SLUS_208.92, 2026-11-10):
+
+* **The size comes from the TOC.** `FUN_0019bc98` (through `FUN_0019c1e0`)
+  finds the path in the TOC (`FUN_0019b720`), reads `size` rounded up to
+  2,048 bytes from the entry's sector into the address it is given, and
+  returns the rounded size. No other copy of a bank's size exists: the
+  script finds its strings through the bank's own header
+  (`FUN_00a9f238`: count at +0x08, offset table at +0x14, strings at +0x18).
+* **The destination is a buffer of fixed size, shared with the script.**
+
+  | | scenes | maps |
+  |---|---|---|
+  | loader | `FUN_001eece0` | `FUN_001e00f0` |
+  | script | `cf\scNNNN.sb` at 0x3C6DC0 | `model\map\X.bin` at the block from `FUN_001df928(0x12000)` |
+  | bank | `cf\en\scNNNN.sbl` at 0x3C6DC0 + script size rounded up to 2,048 | `model\map\en\X.sbl` at the block + script size rounded up to 64 |
+  | buffer | 0x20000 bytes (the script-native tables start at 0x3E6DC0) | 0x12000 bytes |
+  | rule | `round2048(sb) + round2048(sbl) <= 131,072` | `align64(bin) + round2048(sbl) <= 73,728` |
+  | retail | 352 pairs, least room 10,240 bytes (`sc8014`) | 113 pairs, least room 1,664 bytes (`E2_EXB06`) |
+
+  So a bank may grow, but only inside its script's buffer. Past that the
+  read runs over whatever follows (for scenes, the table of script natives).
+  `text-import` computes the room for every bank (it is printed in the header
+  of each exported file as `loader room N bytes`) and **refuses a bank past
+  it with or without `--grow`**. `E2_EXB06`'s bank, for one, cannot leave
+  its 2,048-byte sector at all.
+* A bank anywhere else (none on the retail discs) has no known loader and is
+  not relocated. OV01's `FUN_00a81a98` would load `yamamoto\think\thinkNNN.sb`
+  and `yamamoto\think\jp\thinkNNN.sbl` into one 0x12000-byte block; the USA
+  discs carry no such files.
+* The map rule is read from the branch taken when `DAT_0069e1bc` is 0 (the
+  id passed to `FUN_001e0610` is not negative). The other branch loads into
+  space measured from the TOC sizes.
+
+What `patch_iso` rewrites for a relocated object, checked on a copy of USA
+Disc 1 (one bank grown from 284 to 2,984 bytes): the TOC entry's sector (3
+bytes) and size (4 bytes), the ISO volume size (both byte orders), and two
+new sectors at the end of the image. Nothing else in the image differed, the
+other 8,604 TOC entries were unchanged, and for an ARX-compressed object the
+entry's compressed and uncompressed sizes are both rewritten (the ARX header
+carries its own). A re-export of the patched image differed in the one edited
+line only.
+
+Japanese discs: text is inside the scripts and is edited in place, same
+length or shorter; `--grow` does not apply to it.
+
 ## Any file: `patch`
 
 ```sh

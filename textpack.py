@@ -17,21 +17,42 @@ editor cannot show; keep it too. If you do type a real line break inside a
 block, it is joined with the game's ``\\n`` on import.
 
 ``import_text`` re-encodes every changed file (EUC-JP), rebuilds the
-``.sbl`` (strings may grow or shrink; offsets are recomputed), refuses the
-whole import if any file outgrows its slot on the disc (no relocation is
-offered until the engine is shown to follow a moved object), and writes
-the result into a COPY of the disc with ``repack.patch_iso``, which reads
-every write back.
+``.sbl`` (strings may grow or shrink; offsets are recomputed) and writes the
+result into a COPY of the disc with ``repack.patch_iso``, which reads every
+write back. A bank that outgrows its slot on the disc is refused unless
+``grow`` is set (``text-import --grow``); it is then appended to the image
+and its TOC entry repointed.
+
+How far a bank may grow (read from the USA code, 2026-11-10; NOT YET SEEN IN
+THE RUNNING GAME). Both loaders read a file by its TOC size, rounded up to
+2,048-byte sectors (``FUN_0019bc98``), into a buffer of fixed size, script
+first and bank right after it:
+
+* scenes, ``FUN_001eece0``: ``cf\\scNNNN.sb`` goes to a static buffer at
+  0x3C6DC0 and ``cf\\en\\scNNNN.sbl`` to that address + the script's
+  sector-rounded size. The buffer is 0x20000 bytes (the next object, the
+  script-native tables, starts at 0x3E6DC0), so
+  ``round2048(sb) + round2048(sbl) <= 131,072``.
+* maps, ``FUN_001e00f0``: ``model\\map\\X.bin`` goes to a block of 0x12000
+  bytes allocated once (``FUN_001df928(0x12000)``) and
+  ``model\\map\\en\\X.sbl`` to that block + the script's size rounded up
+  to 64, so ``align64(bin) + round2048(sbl) <= 73,728``.
+
+Every retail pair obeys both rules (352 scenes, least room 10,240 bytes; 113
+maps, least room 1,664 bytes). ``bank_budget`` applies them and the import
+refuses a bank past its budget whether or not ``grow`` is set: past it the
+load overwrites what follows the buffer. A bank at any other path has no
+known loader and may not leave its slot.
 
     python textpack.py export DISC.iso OUTDIR
-    python textpack.py import DISC.iso OUTDIR MODDED.iso
+    python textpack.py import DISC.iso OUTDIR MODDED.iso [--grow]
 """
 from __future__ import annotations
 
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,14 +73,45 @@ def _allocations(entries) -> Dict[str, int]:
     return out
 
 
+SCENE_BUFFER = 0x20000      # the static script buffer at USA 0x3C6DC0 (FUN_001eece0)
+MAP_BUFFER = 0x12000        # the block FUN_001df928(0x12000) returns (FUN_001e00f0)
+
+
+def _round(n: int, to: int) -> int:
+    return (n + to - 1) // to * to
+
+
+def bank_budget(bank_path: str, sizes: Dict[str, int]) -> Tuple[Optional[int], str]:
+    """(largest .sbl byte size the loader has room for, why) for a bank path.
+    ``sizes`` maps lower-case TOC path -> stored size. (None, reason) when no
+    loader is known for the path or its script is missing."""
+    low = bank_path.lower()
+    head, _, name = low.rpartition("\\")
+    parent, _, lang = head.rpartition("\\")
+    stem = name.rsplit(".", 1)[0]
+    if parent == "cf":
+        script, buf, align, who = f"cf\\{stem}.sb", SCENE_BUFFER, SECTOR, "FUN_001eece0"
+    elif parent == "model\\map":
+        script, buf, align, who = f"model\\map\\{stem}.bin", MAP_BUFFER, 64, "FUN_001e00f0"
+    else:
+        return None, "no loader is known for a bank at this path"
+    if script not in sizes:
+        return None, f"its script {script} is not in the table of contents"
+    used = _round(sizes[script], align)
+    room = (buf - used) // SECTOR * SECTOR          # the bank is read in whole sectors
+    return room, (f"{who} loads {script} ({sizes[script]} bytes, {used} with rounding) and then this bank "
+                  f"into one {buf}-byte buffer")
+
+
 def _sbl_entries(iso: IsoImage):
     for chain in available_chains(iso):
         reader = ChainReader(iso, chain)
         entries = parse_toc(bytes(reader.toc_bytes()), CHAINS[chain][0])
         alloc = _allocations(entries)
+        sizes = {e.path.lower(): e.size for e in entries}
         for e in entries:
             if e.ext == "sbl":
-                yield chain, reader, e, alloc[e.path]
+                yield chain, reader, e, alloc[e.path], sizes
 
 
 # ------------------------------------------------ inline text (Japan, the demo)
@@ -167,11 +219,13 @@ def export_text(iso_path: str, out_dir: str) -> int:
     iso = IsoImage(iso_path)
     root = Path(out_dir)
     n_files = n_strings = 0
-    for chain, reader, e, alloc in _sbl_entries(iso):
+    for chain, reader, e, alloc, sizes in _sbl_entries(iso):
         data = reader.read(e.byte_offset, e.size)
         strings = sbl.parse(data)
+        room, _why = bank_budget(e.path, sizes)
         lines = [f"# {e.path}  chain{chain}  {len(strings)} strings  "
-                 f"stored {e.size} bytes, slot {alloc} bytes"]
+                 f"stored {e.size} bytes, slot {alloc} bytes"
+                 + (f", loader room {room} bytes (--grow)" if room is not None else "")]
         for i, s in enumerate(strings):
             lines.append(f"### {i:04d}")
             t = sbl.to_text(s)
@@ -207,12 +261,13 @@ def read_text_file(path: Path) -> List[bytes]:
     return out
 
 
-def plan_import(iso_path: str, text_dir: str) -> Tuple[Dict[Tuple[int, str], bytes], List[str]]:
+def plan_import(iso_path: str, text_dir: str,
+                grow: bool = False) -> Tuple[Dict[Tuple[int, str], bytes], List[str]]:
     iso = IsoImage(iso_path)
     root = Path(text_dir)
     changed: Dict[Tuple[int, str], bytes] = {}
     problems: List[str] = []
-    for chain, reader, e, alloc in _sbl_entries(iso):
+    for chain, reader, e, alloc, sizes in _sbl_entries(iso):
         src = _out_path(root, chain, e.path)
         if not src.exists():
             continue
@@ -225,18 +280,31 @@ def plan_import(iso_path: str, text_dir: str) -> Tuple[Dict[Tuple[int, str], byt
         if new == old:
             continue
         blob = sbl.build(new, data)
-        if len(blob) > alloc:
-            problems.append(f"{e.path}: rebuilt size {len(blob)} exceeds its {alloc}-byte slot")
+        room, why = bank_budget(e.path, sizes)
+        if room is not None and len(blob) > room:
+            problems.append(f"{e.path}: rebuilt size {len(blob)} is {len(blob) - room} bytes past the "
+                            f"{room} bytes the game has room for ({why}); shorten the text, "
+                            f"relocating cannot help")
             continue
+        if len(blob) > alloc:
+            if room is None:
+                problems.append(f"{e.path}: rebuilt size {len(blob)} exceeds its {alloc}-byte slot and "
+                                f"cannot be relocated: {why}")
+                continue
+            if not grow:
+                problems.append(f"{e.path}: rebuilt size {len(blob)} exceeds its {alloc}-byte slot "
+                                f"(over by {len(blob) - alloc}; --grow relocates it to the end of the "
+                                f"image, loader room {room} bytes)")
+                continue
         changed[(chain, e.path)] = blob
     plan_inline(iso, root, changed, problems)
     return changed, problems
 
 
-def import_text(iso_path: str, text_dir: str, out_iso: str) -> int:
+def import_text(iso_path: str, text_dir: str, out_iso: str, grow: bool = False) -> int:
     from repack import patch_iso
 
-    changed, problems = plan_import(iso_path, text_dir)
+    changed, problems = plan_import(iso_path, text_dir, grow=grow)
     for p in problems:
         print("refused: " + p, file=sys.stderr)
     if problems:
@@ -247,17 +315,117 @@ def import_text(iso_path: str, text_dir: str, out_iso: str) -> int:
     if Path(out_iso).resolve() != Path(iso_path).resolve():
         print(f"copying {iso_path} -> {out_iso} ...", file=sys.stderr)
         shutil.copyfile(iso_path, out_iso)
-    patch_iso(out_iso, changed)
-    print(f"patched {len(changed)} text file(s) into {out_iso}", file=sys.stderr)
+    reports = patch_iso(out_iso, changed, grow=grow)
+    moved = [r for r in reports if r.relocated_lba is not None]
+    print(f"patched {len(changed)} text file(s) into {out_iso}"
+          + (f"; {len(moved)} relocated to the end of the image (not yet seen in the running game)"
+             if moved else ""), file=sys.stderr)
     return 0
+
+
+def _edit_block(path: Path, index: int, new_text: str, marker: str = "### ") -> None:
+    """Replace the text of block ``index`` (0-based) of an exported file (self-tests)."""
+    lines = path.read_text(encoding="utf-8").split("\n")
+    heads = [k for k, ln in enumerate(lines) if ln.startswith(marker)]
+    k = heads[index]
+    end = heads[index + 1] if index + 1 < len(heads) else len(lines) - 1
+    body = [ln for ln in lines[k + 1:end] if ln.startswith("#")] + [new_text]
+    path.write_text("\n".join(lines[:k + 1] + body + lines[end:]), encoding="utf-8")
+
+
+def self_test() -> int:
+    import contextlib
+    import io
+    import tempfile
+
+    import minidisc
+
+    ok = True
+
+    def check(cond, msg):
+        nonlocal ok
+        print(("ok    " if cond else "FAIL  ") + msg)
+        ok &= bool(cond)
+
+    def quiet(fn, *a, **k):
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            return fn(*a, **k)
+
+    # the loader budgets
+    sizes = {"cf\\sc0001.sb": 3000, "model\\map\\x.bin": 70004}
+    check(bank_budget("cf\\en\\sc0001.sbl", sizes)[0] == SCENE_BUFFER - 4096, "scene bank: 0x20000 less the script's sectors")
+    check(bank_budget("model\\map\\en\\X.sbl", sizes)[0] == 2048, "map bank: 0x12000 less the script rounded to 64, whole sectors")
+    check(bank_budget("yamamoto\\think\\jp\\think001.sbl", sizes)[0] is None
+          and bank_budget("cf\\en\\sc9999.sbl", sizes)[0] is None, "no budget without a known loader or script")
+
+    scene = [b"[A]One.", b"[B]Two, a longer line.", b"<\xa2\xa2> three"]
+    files = {
+        "cf\\sc0001.sb": b"\x00" * 3000,                       # not parsed: only its size matters here
+        "cf\\en\\sc0001.sbl": sbl.build(scene),
+        "model\\map\\X.bin": b"\x00" * 70004,
+        "model\\map\\en\\X.sbl": sbl.build([b"map line"]),
+        "other\\en\\odd.sbl": sbl.build([b"odd"]),
+        "zz\\end.bin": b"E" * 100,
+    }
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        iso = minidisc.build(td / "mini.iso", files)
+        tree = td / "text"
+        quiet(export_text, str(iso), str(tree))
+        ch, pr = plan_import(str(iso), str(tree))
+        check(not ch and not pr, "an unedited export imports as no change")
+        f = _out_path(tree, 0, "cf\\en\\sc0001.sbl")
+        check("loader room 126976" in f.read_text(encoding="utf-8").split("\n")[0], "the export header states the loader room")
+        _edit_block(f, 1, "[B]Two!")
+        ch, pr = plan_import(str(iso), str(tree))
+        check(list(ch) == [(0, "cf\\en\\sc0001.sbl")] and not pr
+              and sbl.parse(ch[(0, "cf\\en\\sc0001.sbl")]) == [scene[0], b"[B]Two!", scene[2]], "one edited line changes one bank")
+        _edit_block(f, 1, "[B]" + "long " * 500)                # 2.5 KB: past the one-sector slot
+        ch, pr = plan_import(str(iso), str(tree))
+        check(not ch and len(pr) == 1 and "--grow" in pr[0], "a bank past its slot is refused without --grow")
+        out = td / "grown.iso"
+        rc = quiet(import_text, str(iso), str(tree), str(out), grow=True)
+        got = sbl.parse(minidisc.read(out, "cf\\en\\sc0001.sbl"))
+        check(rc == 0 and got[1] == b"[B]" + b"long " * 500 and got[0] == scene[0]
+              and out.stat().st_size == iso.stat().st_size + 2 * SECTOR, "--grow relocates it; the image gains its sectors")
+        check(all(minidisc.read(out, p) == d for p, d in files.items() if p != "cf\\en\\sc0001.sbl"),
+              "every other object is unchanged")
+        tree2 = td / "text2"
+        quiet(export_text, str(out), str(tree2))
+        ch, pr = plan_import(str(out), str(tree2))
+        check(not ch and not pr, "the grown image exports and re-imports as no change")
+        # the map bank has 2,048 bytes of loader room: more is refused even with --grow
+        quiet(export_text, str(iso), str(tree))
+        m = _out_path(tree, 0, "model\\map\\en\\X.sbl")
+        _edit_block(m, 0, "x" * 3000)
+        ch, pr = plan_import(str(iso), str(tree), grow=True)
+        check(not ch and len(pr) == 1 and "FUN_001e00f0" in pr[0] and "relocating cannot help" in pr[0],
+              "a bank past the loader's buffer is refused even with --grow")
+        _edit_block(m, 0, "map line")
+        o = _out_path(tree, 0, "other\\en\\odd.sbl")
+        _edit_block(o, 0, "y" * 3000)
+        ch, pr = plan_import(str(iso), str(tree), grow=True)
+        check(not ch and len(pr) == 1 and "no loader is known" in pr[0], "a bank with no known loader may not leave its slot")
+        _edit_block(o, 0, "odd")
+        _edit_block(f, 0, "[A]One.")
+        (tree / "chain0" / "cf" / "en" / "sc0001.sbl.txt").write_text(
+            f.read_text(encoding="utf-8").replace("### 0002", "### 0002\n### 0003"), encoding="utf-8")
+        ch, pr = plan_import(str(iso), str(tree))
+        check(not ch and any("do not add or remove" in p for p in pr), "an added block is refused")
+    print("self-test", "passed" if ok else "FAILED")
+    return 0 if ok else 1
 
 
 def main() -> int:
     a = sys.argv[1:]
+    if a[:1] == ["--self-test"]:
+        return self_test()
     if len(a) == 3 and a[0] == "export":
         return export_text(a[1], a[2])
+    grow = "--grow" in a
+    a = [x for x in a if x != "--grow"]
     if len(a) == 4 and a[0] == "import":
-        return import_text(a[1], a[2], a[3])
+        return import_text(a[1], a[2], a[3], grow=grow)
     print(__doc__)
     return 2
 
