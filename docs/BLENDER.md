@@ -51,5 +51,8 @@ craft, `model/mobj/` map objects.
   looks wrong in one of those ways, that is a real report: please open an
   issue.
 
-Only Disc 1 of the USA release has been swept. How the format works, and how
+Swept so far: USA Disc 1 (944 models written, one flagged by a check), Japan
+Disc 1 (941, one flagged) and the *Xenosaga Freaks* demo (666, five flagged: four
+map objects with a skinned batch in a file marked static, one failing the
+facing check). USA Disc 2 shares its model data with Disc 1. How the format works, and how
 each part was proven: [MODELS.md](MODELS.md).

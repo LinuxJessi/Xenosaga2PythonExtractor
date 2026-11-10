@@ -83,7 +83,7 @@ on their own. `python build.py` makes a standalone app with PyInstaller
 
 | | |
 |---|---|
-| Models | all 944 `.pxy` meshes on Disc 1 as `.glb`: mesh, UVs, textures inside the file, vertex colours, skin weights and, for the 562 with a usable skeleton file, an armature whose bones sit on the mesh. `browse` writes them all; `model` does one straight from the disc ([docs/BLENDER.md](docs/BLENDER.md), [docs/MODELS.md](docs/MODELS.md)) |
+| Models | all 944 `.pxy` meshes (941 on the Japanese disc, 666 in the demo) as `.glb`: mesh, UVs, textures inside the file, vertex colours, skin weights and, for the 562 with a usable skeleton file, an armature whose bones sit on the mesh. `browse` writes them all; `model` does one straight from the disc ([docs/BLENDER.md](docs/BLENDER.md), [docs/MODELS.md](docs/MODELS.md)) |
 | Textures | every `.txy` page: 65,938 PNGs, named the way the artists named them (`shion00_hair`, `kosmos00_face`), skybox faces and animated pages one per bank; plus 1,333 more from the pages inside effect files (`textures_png/_embedded/`) |
 | UI sheets | the 85 `.xtx` sheets: citizen portraits, item icons, the title menu words |
 | Fonts | the four glyph sheets of each font, plus the proportional metrics |
