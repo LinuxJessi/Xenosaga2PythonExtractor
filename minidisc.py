@@ -32,11 +32,33 @@ from iso9660 import SECTOR                   # noqa: E402
 TEST_ELF = b"\x7fELF\x01\x01" + bytes(58)
 
 
-def register_test_executable() -> None:
+def register_test_executable(elf: bytes = TEST_ELF) -> None:
     import hashlib
 
     import region
-    region.TEST_EXECUTABLES.add(hashlib.sha256(TEST_ELF).hexdigest())
+    region.TEST_EXECUTABLES.add(hashlib.sha256(elf).hexdigest())
+
+
+def synthetic_executable(build: str = "us", extra=()) -> bytes:
+    """An executable for a mini disc that has the font tables where the build's
+    profile says they are (made-up contents, ``font._synthetic_elf``), registered as
+    a test executable so the kit's executable check accepts it."""
+    import font
+    import region
+    prof = {"us": region.US, "jp": region.JP}[build]
+    elf = font._synthetic_elf(prof.ascii_table_va, prof.kanji_list_va, extra, prof.sys_width_va)
+    register_test_executable(elf)
+    return elf
+
+
+def synthetic_font(pairs: int, blank=()) -> bytes:
+    """A font file with ink in every cell except ``blank`` and (4, 4 + n % 12) metric pairs."""
+    import font
+    sheets = [bytearray(b"\x03" * (font.SHEET_W * font.SHEET_H)) for _ in range(4)]
+    f = font.Font([bytes(font.HEADER)] * 2, sheets, [(4, 4 + k % 12) for k in range(pairs)])
+    for c in blank:
+        f.set_cell(c, [[0] * font.CELL_W] * font.CELL_H)
+    return f.to_bytes()
 
 
 def _record(name: bytes, lba: int, size: int, is_dir: bool = False) -> bytes:
@@ -80,9 +102,10 @@ def toc_events(paths_sectors_sizes: List[Tuple[str, int, int]]) -> List[toc.Even
 
 
 def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
-          slack: Dict[str, int] = None) -> Path:
+          slack: Dict[str, int] = None, elf: bytes = None) -> Path:
     """Write the image. ``files`` maps TOC path -> bytes, laid out in the given
-    order; ``slack`` adds spare sectors after a path (a slot larger than the file)."""
+    order; ``slack`` adds spare sectors after a path (a slot larger than the file);
+    ``elf`` replaces the stand-in boot executable (``synthetic_executable``)."""
     slack = slack or {}
     toc_sectors = 1
     rows, cur, blobs = [], toc_sectors, []
@@ -94,8 +117,10 @@ def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
     body = b"".join(blobs)
     toc_bytes = toc.serialize(toc_events(rows), toc_sectors)
     cnf = f"BOOT2 = cdrom0:\\{boot};1\r\nVER = 1.00\r\nVMODE = NTSC\r\n".encode("ascii")
-    elf = TEST_ELF
-    root_lba, cnf_lba, elf_lba, toc_lba = 18, 19, 20, 21
+    elf = TEST_ELF if elf is None else elf
+    elf_sectors = max(1, (len(elf) + SECTOR - 1) // SECTOR)
+    root_lba, cnf_lba, elf_lba = 18, 19, 20
+    toc_lba = elf_lba + elf_sectors
     f01_lba = toc_lba + toc_sectors
     f02_lba = f01_lba + len(body) // SECTOR
     total = f02_lba + 1

@@ -49,12 +49,14 @@ class Region:
     exe: Optional[str] = None           # the game executable when it is not the boot ELF
     kanji_list_va: Optional[int] = None  # the font's extra-kanji list (font.py); None = not located
     ascii_table_va: Optional[int] = None  # the font's ASCII -> EUC table: u16 at VA + 2 * byte
+    sys_width_va: Optional[int] = None  # USA: widths of ASCII without $han, i32 at VA + 4 * byte
     exe_sha256: Optional[str] = None    # the executable every address above was read from
     serial: Optional[str] = None        # set only on the profile of an UNKNOWN build
 
 
 US = Region("us", "en", "sbl", ("font0.us", "font1.us"), "yamamoto\\batdat.us", "carddata.bin",
             kanji_list_va=0x63E870, ascii_table_va=0x63E770,     # FUN_00197988, FUN_00198b90
+            sys_width_va=0x63E7F8,                               # FUN_00195938 at 0x195d08
             exe_sha256="1f978e64c837f9b5f0dcaee4bbe3fc28b45368fdac47404eecf2249dcbf7462e")
 JP = Region("jp", None, "inline", ("font0.tex", "font1.tex"), "yamamoto\\batdat.bin", "carddata.new",
             kanji_list_va=0x63A2A0, ascii_table_va=0x63A1A0,     # code at 0x197828, 0x198a58

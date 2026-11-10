@@ -269,6 +269,20 @@ def xs2_cell(lead: int, trail: int, extra: Sequence[Tuple[int, int]] = (), a9: b
     return FALLBACK_CELL
 
 
+def us_two_byte(lead: int, trail: int) -> bool:
+    """USA ``FUN_00194dd0``: the only two-byte codes the USA print and width
+    functions read as a pair. Any other byte from 0x80 up is one character."""
+    if trail == 0:
+        return False
+    if lead in (0xA4, 0xA6, 0xAD):
+        return True
+    if lead == 0xA1:
+        return trail in (0xBD, 0xDA, 0xDB, 0xDF, 0xF9, 0xFA, 0xFB)
+    if lead == 0xA2:
+        return trail in (0xA2, 0xA3, 0xA4, 0xF6)
+    return False
+
+
 class Glyph(NamedTuple):
     length: int                 # bytes of text consumed
     kind: str                   # "cell" or "8x8" (the system font: no cell of this file)
@@ -297,6 +311,7 @@ class Addressing:
     prop_cells: int
     prop_pad: int
     drawable: int
+    sys_widths: Tuple[int, ...] = ()            # USA: width of bytes 0x20..0x7F without $han
 
     @classmethod
     def from_executable(cls, elf: bytes, profile) -> "Addressing":
@@ -324,7 +339,15 @@ class Addressing:
             raise FontError("the ASCII table is not at the profile's address: wrong executable for this profile?")
         if any(a < 0xD0 for a, _ in extra):
             raise FontError("the extra-kanji list holds a lead byte below 0xD0: wrong executable?")
-        return cls(profile.name, tuple(ascii_codes), tuple(extra), **_BUILDS[profile.name])
+        sysw: Tuple[int, ...] = ()
+        if getattr(profile, "sys_width_va", None) is not None:
+            try:
+                sysw = struct.unpack("<96i", region.read_va(elf, profile.sys_width_va + 4 * 0x20, 4 * 96))
+            except region.ElfError as e:
+                raise FontError(f"cannot read the width table from the executable: {e}")
+            if any(not 0 < w <= 32 for w in sysw):
+                raise FontError("the width table is not at the profile's address: wrong executable?")
+        return cls(profile.name, tuple(ascii_codes), tuple(extra), sys_widths=sysw, **_BUILDS[profile.name])
 
     @classmethod
     def from_iso(cls, iso) -> "Addressing":
@@ -345,15 +368,7 @@ class Addressing:
         USA: ``FUN_00194dd0``. Japan: any byte from 0xA0 up leads a pair."""
         if not self.latin1:
             return lead >= 0xA0
-        if trail == 0:
-            return False
-        if lead in (0xA4, 0xA6, 0xAD):
-            return True
-        if lead == 0xA1:
-            return trail in (0xBD, 0xDA, 0xDB, 0xDF, 0xF9, 0xFA, 0xFB)
-        if lead == 0xA2:
-            return trail in (0xA2, 0xA3, 0xA4, 0xF6)
-        return False
+        return us_two_byte(lead, trail)
 
     def glyph(self, text: bytes, i: int = 0, han: bool = True) -> Glyph:
         """The character at ``text[i]`` as the print function reads it. ``han``
@@ -418,6 +433,10 @@ class Addressing:
         left, right = metrics[slot]
         return None if left == 0 else right - left + self.prop_pad
 
+    def measurer(self, metrics: Sequence[Tuple[int, int]], han: bool = False, prop: bool = False,
+                 xx1: int = 4) -> "Measurer":
+        return Measurer(self, metrics, han, prop, xx1)
+
     def reachable(self, cell: int) -> bool:
         """False for a cell the build's draw call cannot address (USA: sheets 2 and 3)."""
         return 0 <= cell < self.drawable
@@ -449,6 +468,86 @@ class Addressing:
                         row["advance"] = FIXED_ADVANCE
             rows.append(row)
         return rows
+
+
+class Measurer:
+    """The pixel width of a line, as the game's width function computes it (USA
+    ``FUN_00195938``, which the subtitle packer calls for every line through
+    ``FUN_00195e78``). The ``$prop``, ``$han``, ``$xx1`` and ``$xx3`` states live in
+    globals in the game, so they carry from one call to the next; here they
+    carry inside one Measurer.
+
+    Read from the USA function: a ``$...;`` code has no width (``$prop``, ``$han``,
+    ``$xx1,N``, ``$xx3,N`` set the state; ``$rubys;`` skips to ``$rubye;``); an ASCII
+    byte without ``$han`` takes its width from a table in the executable (USA) or
+    16 (Japan, 0x195bc4); every other character is 19 wide unless ``$prop`` is on
+    and its cell is below the build's limit, when it is ``right - left + pad``, or
+    ``$xx1 + 1`` for a pair whose left is 0, or 10 when ``$xx3`` is non-zero.
+    Control bytes below 0x20 are refused (not ported). The Japanese function was
+    read only where it measures a character (0x195ba0-0x195ca0); its ``$`` handling
+    is assumed to be the USA one."""
+
+    def __init__(self, addressing: "Addressing", metrics, han: bool, prop: bool, xx1: int):
+        self.a, self.metrics = addressing, metrics
+        self.han, self.prop, self.xx1, self.xx3 = han, prop, xx1, 0
+
+    @staticmethod
+    def _number(s: bytes, i: int) -> int:
+        j = i
+        while j < len(s) and s[j] in b"+-0123456789":
+            j += 1
+        try:
+            return int(s[i:j] or b"0")
+        except ValueError:
+            return 0
+
+    def width(self, s: bytes) -> int:
+        w, i, n = 0, 0, len(s)
+        while i < n and s[i] != 0:
+            c = s[i]
+            if c == 0x24:                                        # '$'
+                t = s[i + 1:i + 8]
+                if t.startswith(b"prop") and i + 5 < n:
+                    self.prop = bool(s[i + 5] & 1)
+                elif t.startswith(b"han") and i + 4 < n:
+                    self.han = bool(s[i + 4] & 1)
+                elif t.startswith(b"xx1,"):
+                    self.xx1 = self._number(s, i + 5) & 0xFF
+                elif t.startswith(b"xx3,"):
+                    self.xx3 = self._number(s, i + 5) & 0xFF
+                elif t.startswith(b"rubys;"):
+                    e = s.find(b"$rubye;", i)
+                    if e < 0:
+                        raise FontError("$rubys; without $rubye;")
+                    i = e
+                e = s.find(b";", i)
+                if e < 0:
+                    raise FontError("a '$' code without its ';' (the game would read on past the text)")
+                i = e + 1
+                continue
+            if c < 0x20:
+                raise FontError(f"control byte {c:#04x} in a measured line")
+            if c < 0x80 and not self.han:
+                if self.a.latin1:
+                    if not self.a.sys_widths:
+                        raise FontError("the width table for ASCII without $han was not read")
+                    w += self.a.sys_widths[c - 0x20]
+                else:
+                    w += 16
+                i += 1
+                continue
+            g = self.a.glyph(s, i, han=True)
+            i += g.length
+            if not self.prop or g.cell is None or not 0 <= g.cell < self.a.prop_cells:
+                w += FIXED_ADVANCE
+            elif self.xx3:
+                w += 10
+            else:
+                if g.cell >= len(self.metrics):
+                    raise FontError(f"cell {g.cell} has no metric pair in this font")
+                left, right = self.metrics[g.cell]
+                w += self.xx1 + 1 if left == 0 else right - left + self.a.prop_pad
+        return w
 
 
 # --- Episode I addressing: fenced --------------------------------------------
@@ -900,15 +999,19 @@ def cmd_table(iso_path: str, out: Optional[str]) -> int:
     return 0
 
 
-def _synthetic_elf(ascii_va: int, list_va: int, extra: Sequence[Tuple[int, int]]) -> bytes:
+def _synthetic_elf(ascii_va: int, list_va: int, extra: Sequence[Tuple[int, int]],
+                   sys_width_va: Optional[int] = None) -> bytes:
     """A tiny ELF with one PT_LOAD data segment holding a synthetic ASCII table and
     an extra-kanji list: enough for from_executable."""
     # letters and digits take their JIS row-3 code; every other byte gets a made-up
     # row-1 code (0xA1A1 + (byte - 0x20) % 94). The game's own table is read from its executable.
     codes = [0xA300 | (c + 0x80) if chr(c).isalnum() else 0xA1A1 + (c - 0x20) % 94 for c in range(0x20, 0x80)]
     seg_va, seg_off = min(ascii_va, list_va) & ~0xFFF, 0x1000
-    size = max(ascii_va + 0x100, list_va + 2 * len(extra) + 2) - seg_va
+    size = max(ascii_va + 0x100, list_va + 2 * len(extra) + 2,
+               (sys_width_va + 4 * 0x80) if sys_width_va is not None else 0) - seg_va
     seg = bytearray(size)
+    if sys_width_va is not None:                    # a made-up width per byte: 4 + byte % 9
+        struct.pack_into("<96i", seg, sys_width_va + 4 * 0x20 - seg_va, *[4 + c % 9 for c in range(0x20, 0x80)])
     struct.pack_into("<96H", seg, ascii_va + 0x40 - seg_va, *codes)
     for i, (a, b) in enumerate(extra):
         seg[list_va - seg_va + 2 * i:list_va - seg_va + 2 * i + 2] = bytes((a, b))
@@ -1009,6 +1112,25 @@ def self_test() -> int:
     check(jp.glyph(b"##") == Glyph(2, "cell", 0xA1A4, 3) and jp.glyph(b"#10").code == 0xD0A1 + 0x30
           and jp.glyph(b"#40").code == 0xD1A1 + 2, "Japan $han '#': '##' and '#XX' (code D0A1 + XX + 0x20, rows of 94)")
     check(jp.reachable(4095), "Japan: all four sheets reachable")
+    # the width function: $-codes, state carried between calls
+    m = us.measurer(fu.metrics, han=True, prop=True, xx1=8)
+    wa = (4 + 138 % 12) - 4 + 3                                   # 'A', cell 138
+    check(m.width(b"AA") == 2 * wa and m.width(b"$zoom13;A$col808080;A") == 2 * wa, "width: $-codes have none")
+    check(m.width(b" ") == 9, "width: a pair with left 0 is $xx1 + 1 wide")
+    check(m.width(b"A$rubyb;A$rubys;AAAA$rubye;A") == 3 * wa, "width: the ruby reading is skipped")
+    check(m.width(b"$prop0;A") == 19 and m.width(b"A") == 19 and m.width(b"$prop1;A") == wa,
+          "width: $prop is a state that carries to the next line")
+    check(m.width(b"$xx3,1;AA") == 20 and m.width(b"$xx3,0;$xx1,3; ") == 4, "width: $xx3 fixes 10, $xx1 sets the default")
+    check(m.width(b"\xc9") == (4 + 329 % 12) - 4 + 3 and m.width(b"\xa4\xa2") == (4 + 193 % 12) - 4 + 3,
+          "width: USA Latin-1 byte and a two-byte pair")
+    check(jp.measurer(fj.metrics, han=True, prop=True).width(b"\xa4\xa2A") == 19 + (4 + 138 % 12) - 4 + 4
+          and jp.measurer(fj.metrics).width(b"A") == 16, "width: Japan (kana fixed, pad 4, ASCII without $han 16)")
+    for bad in (b"$zoom13", b"A\x01B"):
+        try:
+            m.width(bad)
+            check(False, "width refuses what it cannot follow")
+        except FontError:
+            check(True, f"width refuses {bad!r}")
     rows = us.table(fu.metrics)
     r41 = next(r for r in rows if r["byte"] == "41")
     rc9 = next(r for r in rows if r["byte"] == "C9")
