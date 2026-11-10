@@ -212,7 +212,8 @@ def self_test():
                                     "MSCAL", "STCYCL", "UNPACK"], cs
     assert cs[1].fmt == "V4-32" and cs[1].flg == 1 and cs[1].usn == 1
     assert cs[1].addr == 5 and cs[1].count == 2
-    assert unpack_data(s, cs[1])[1] == (4.0, 5.0, 6.0, 7.0) or True
+    assert unpack_data(s, cs[1])[1] == struct.unpack(
+        "<4I", struct.pack("<4f", 4.0, 5.0, 6.0, 7.0))   # raw words
     assert unpack_data(s, cs[3]) == [(0, 1, 2, 3), (4, 5, 6, 7),
                                      (8, 9, 10, 11)]
     assert unpack_data(s, cs[4]) == [(1, -1, 3)]
