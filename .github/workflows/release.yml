@@ -1,0 +1,138 @@
+name: Build releases
+
+# The same triggers as the Episode I and III kits' workflows, one job per OS
+# because PyInstaller does not cross-compile:
+#   * git tag matching v*  — drafts a GitHub Release with both zips attached
+#   * manual workflow_dispatch — the same zips as build artefacts (no Release)
+#   * pushes to main that touch packaging/code — smoke test only, no upload
+#
+# The kit needs numpy (requirements.txt: the SPU2 music renderer), installed
+# here before the self-tests so the bundles carry it. The only other thing
+# fetched is a portable ffmpeg for movie conversion. build.py runs the
+# bundle's own self-tests after building.
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths:
+      - 'packaging/**'
+      - '.github/workflows/release.yml'
+      - '**.py'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed for softprops/action-gh-release on tag pushes
+
+env:
+  PYTHON_VERSION: '3.12'   # the sibling kits' release Python
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install requirements and PyInstaller
+        run: python -m pip install --upgrade pip -r requirements.txt pyinstaller
+
+      - name: Self-tests from source
+        run: |
+          python cli.py self-test
+          python gui.py --self-test
+
+      # Latest BtbN GPL win64 ffmpeg -> packaging/tools/, bundled under tools/.
+      - name: Download portable ffmpeg
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{ 'User-Agent' = 'xenosaga2-extractor-release'; 'Authorization' = "Bearer $env:GH_TOKEN" }
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest' -Headers $headers
+          $asset = $rel.assets | Where-Object { $_.name -like 'ffmpeg-*-win64-gpl.zip' -and $_.name -notlike '*shared*' } | Select-Object -First 1
+          if (-not $asset) { throw "No matching ffmpeg asset in $($rel.tag_name)" }
+          $zip = "$env:RUNNER_TEMP/ffmpeg.zip"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP/ffmpeg-unpacked"
+          $exe = Get-ChildItem -Path "$env:RUNNER_TEMP/ffmpeg-unpacked" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $exe) { throw "ffmpeg.exe not found in unpacked archive" }
+          Copy-Item $exe.FullName "packaging/tools/ffmpeg.exe"
+
+      - name: Build
+        run: python build.py --clean
+
+      - name: Create zip
+        shell: pwsh
+        run: Compress-Archive -Path "packaging/dist/Xenosaga-II-Extractor-windows/*" -DestinationPath "Xenosaga-II-Extractor-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xenosaga-II-Extractor-win64
+          path: Xenosaga-II-Extractor-win64.zip
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: Xenosaga-II-Extractor-win64.zip
+          generate_release_notes: true
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install requirements and PyInstaller
+        run: python -m pip install --upgrade pip -r requirements.txt pyinstaller
+
+      - name: Self-tests from source
+        run: |
+          python cli.py self-test
+          python gui.py --self-test
+
+      # Static arm64 ffmpeg -> packaging/tools/, bundled under tools/ in the .app.
+      - name: Download portable ffmpeg
+        run: |
+          curl -sL -o /tmp/ffmpeg.zip "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip"
+          unzip -o -q /tmp/ffmpeg.zip -d packaging/tools/
+          chmod +x packaging/tools/ffmpeg
+          packaging/tools/ffmpeg -version | head -1
+
+      - name: Build
+        run: python build.py --clean
+
+      # ditto keeps the symlinks and exec bits inside the .app; plain zip does not.
+      - name: Create zip
+        run: ditto -c -k --keepParent "packaging/dist/Xenosaga-II-Extractor.app" "Xenosaga-II-Extractor-macos.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xenosaga-II-Extractor-macos
+          path: Xenosaga-II-Extractor-macos.zip
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: Xenosaga-II-Extractor-macos.zip
+          generate_release_notes: true
+          body: |
+            ### macOS: first launch
+
+            The app is ad-hoc signed, not notarized. After unzipping,
+            right-click **Xenosaga-II-Extractor.app** → **Open** the first
+            time (or run `xattr -dr com.apple.quarantine Xenosaga-II-Extractor.app`).
+            After that it double-clicks normally.

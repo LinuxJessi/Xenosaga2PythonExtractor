@@ -1,0 +1,6 @@
+# PyInstaller output (build.py writes here, not at the repository root)
+build/
+dist/
+# downloaded per-OS by the release workflow (or dropped in by hand); only TOOLS.txt is tracked
+tools/ffmpeg
+tools/ffmpeg.exe

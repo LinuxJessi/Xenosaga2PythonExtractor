@@ -1,0 +1,286 @@
+# Xenosaga Episode II: disc formats
+
+Byte layouts for everything the kit reads, with how each was confirmed.
+"All N files" means the claim was checked on every object of that kind on
+the USA discs (Disc 1 SLUS_208.92, Disc 2 SLUS_211.33), 2026-11-05.
+
+## The discs
+
+| | Disc 1 | Disc 2 |
+|---|---|---|
+| boot ELF | `SLUS_208.92` | `SLUS_211.33`, byte-identical to Disc 1's |
+| layer | single (DVD-5), 2,286,192 sectors | single, 2,291,584 sectors |
+| bigfiles | `XENOSAGA.00-.02` (chain 0), `.10-.14` (chain 1) | `.00-.02` (chain 0, byte-identical), `.20-.24` (chain 2) |
+
+`OV01.OVL` (the field and script runtime), `OV02.OVL` (memory-card
+messages, also linked inside the boot ELF as section `ov02`) and the IOP
+modules are identical on both discs.
+
+## The TOC (`XENOSAGA.00`, `.10`, `.20`)
+
+Episode I's binary table of contents with front-coded names. The first byte
+is the TOC's own size in sectors; entry sectors count from the TOC file
+itself, the data continuing into the sibling bigfiles.
+
+    toc    = [u8 size in sectors] item* [0x00]* filler
+    file   = [n]      [code] [literal: n-2]  [u24le sector] [u32le size]
+    cfile  = [n|0x40] [code] [literal]       [u24le sector] [u32le csize] [u24le usize]   (ARX)
+    dir    = [0x80|n] [u8 pops] [code] [literal: n-3]
+    pop    = [0x00]
+    filler = "MONOLITHSOFT Xenosaga Episode.2\0", phase-locked to offset % 32
+
+Front coding: `code == 0` means the literal is the whole name plus NUL.
+Otherwise `H = code >> 4`, `L = code & 15 = len(literal)`, `p = len(prev) - H - 1`,
+`name = prev[:p] + literal + prev[p+L:]`, cut at the first NUL. `prev` is the
+previous file name (the first file after a directory is written whole);
+directories code against the previous directory at the same depth. A literal
+carries a NUL exactly when the name's length changes.
+
+Example, the start of chain 1: `020300_marglis.xap`, then `[08][96]"obj200"`
+(H 9, L 6: keep `020300_m`, write `obj200`, keep `.xap`) =
+`020300_mobj200.xap`, then `[03][41]"1"` = `020300_mobj201.xap`.
+
+Proof: 9,030 entries (8,605 + 233 + 192); extents tile each chain with no
+gap or overlap; chains 1 and 2 end on their last byte; the kit's encoder
+rebuilds all three TOCs byte-identically from the parsed items
+(`toc.py --iso`). **Episode III's catalogs use the same grammar**: `X3.00`,
+`X3.10`, `X3.20` parse to 15,225 entries that agree in name and size with
+Lybac's 2006 tables and rebuild byte-identically
+(`docs/research/xs3_toc_check.py`); their filler also says "Episode.2".
+
+Three entries are ARX-compressed (`yajima\titleobj.xtx`, `title.bin`,
+`title2.bin`): Episode I's coder, recompressed byte-identically by `arx.py`.
+
+## Textures: `.txy` (941 + 2 JPEGs + 4 placeholders)
+
+The GS upload for one model or map plus a named entry table. The same block
+Episode III embeds in its packages, standalone here.
+
+    +0x00 "txy\0"   +0x04 u32 bank count   +0x08 u32 size   +0x10 u32 bank tables[count]
+
+Bank count: 0 = placeholder (4 files), 1 = characters and props (723),
+2-3 = field maps (207), 4/8/23 = skyboxes and animated pages (7). A bank
+table is record 0 (`canvas_width` at word 2, strip count word 5, entry count
+word 6), the strip records `{data_off, gs_block, w, h, 0, qwords, ?, 4}`, and
+the entry table (0x60 each, ending where the first strip's pixels start):
+
+    +0x00 gs addr  +0x04 fmt (0x13 PSMT8, 0x14 PSMT4, 0 CT32)  +0x08 w  +0x0C h
+    +0x10 x  +0x14 y  +0x18 cbp  +0x1C flag  +0x20 palx  +0x24 paly
+    +0x28 duplicate flag  +0x2C 1024/512  +0x30 BANK INDEX  +0x40 name[32]
+
+Every bank of a file carries the same entry table; only the strips differ.
+**`+0x30` names the bank an entry's pixels are in.** The 23-bank skybox
+`model\map\E2_EVS02.txy` holds 23 cube faces at the same rect, one per bank;
+on the two-bank field map `yamamoto\map\E2_MIL15.txy` 9 of 87 entries live in
+bank 1. Decoding each entry against GS memory after banks 0..b are uploaded
+fixes 71 of 78 bank-0 entries on that map that came out as noise when all
+banks were simply overlaid. Episode III's map packages carry the same word
+(70 multi-bank maps in that kit's dump, up to 8 banks), which is a lead for
+its residual noisy map entries. Three entries on the disc have bank
+0xFFFFFFFF; the kit reads them from the last bank.
+
+Swizzles and CLUT order are Episode III's (`chrtex.py`), PSMT4 included.
+Two files have more than 512 entries (599 and 629).
+
+**Embedded pages.** 2,167 more txy blocks sit inside 697 other objects:
+`simajiri\esd\*.esd` (1,821 blocks in 592 files), `simajiri\esp\*.esp`
+(334 in 104) and `yajima\titlebg2.bin` (12). A block is taken where `txy\0`
+is followed by a bank count of 1-32, a total size that fits the container,
+0x90 at +0x10 and a table that parses; a `txy\0` preceded by `.` is a texture
+*name* ("ef_ring.txy"), 2,348 of those, plus 193 hits with another +0x10.
+The 3,547 entries give 1,333 images not written by the standalone pass
+(721 duplicate a standalone page, 1,493 an earlier embedded one), written to
+`browse/textures_png/_embedded/` with `embedded_textures.csv`.
+
+## UI sheets: `.xtx` (85)
+
+Episode I's XTX unchanged: header `{magic, total, count, 0x10}`, 20-byte
+sub-image records `{u16 w, u16 bufw, u16 h, u16 ?, u32 gs_off, u32 size
+(qwords), u32 addr}`, a CT32 canvas 256 (`bufw` 4) or 512 (`bufw` 8) wide.
+**Parked-corner palette (69 sheets, solved 2026-11-05):** the 50 citizen
+portraits, 18 item cards (`iwase\img\*`) and `omiya\botan.xtx` are one
+canvas image whose top-right 16x16 tile (x = w-16, y = 0) is the 256-colour
+CSM1 palette, with nothing below it. `xtx._parked_corner` recognises exactly
+these 69 and colours the art with that tile alone (palette source `corner`).
+Episode I's ranking passes picked a wrong tile for 18 of them (grey or
+garbled portraits and cards), although the corner tile renders every one
+correctly.
+
+**Frame masks (3 sheets):** `ctz_alpha.xtx`, `item_alpha.xtx` and
+`door_alpha.xtx` use the same layout with a two-colour corner palette (entry 0
+clear, entry 1 opaque white) and art in indices 0/1 only: a rounded rectangle
+the size of the pictures beside it (112x127 portraits, 128x143 item cards).
+The quest board draws every portrait and card through its directory's mask;
+`browse` does the same (`xtx.apply_mask`), which rounds the corners and cuts
+the dark margin right of the art. No door pictures ship on the USA disc.
+
+`yajima\titleobj.xtx` has no palette at all and is true colour (the title
+menu words: NEW GAME, CONTINUE, INSTALL, UNINSTALL, EXIT, THEATER).
+
+Open: the 11 multi-palette menu sheets (`yosikawa\battle01`, `bg01`,
+`ctrl01`, `font`, `g2_00`, `g2_01`, `g2_02`, `obj01`, `seg01`,
+`omiya\talk01`, `yamamoto\stat\stat`) still go through Episode I's ranking and
+come out grey or garbled. Episode I's 28-byte OVL descriptor tables do not exist in
+this game (checked: OV01 names only `stat.xtx`, and its descriptor-shaped
+records are noise); the menu code names its sheets through a `char[24]` array
+at 0x3eae40, and the palette each sprite uses must be read from that code.
+
+Some `.txy` map textures look odd over a grey background but are right:
+`mil13_grass_col` is one flat colour with the grass drawn entirely in alpha.
+
+## Fonts: `font0.us`, `font1.us`
+
+Episode I's `font0.tex` layout (two PSMCT32 uploads read as PSMT4, four
+sheets of 1,024 20x24 cells) with 384 proportional metric pairs instead of
+256. `font.py` round-trips both files exactly.
+
+## Dialogue: `.sbl` (465)
+
+    +0x00 "SBL "  +0x04 1  +0x08 count  +0x0C 1  +0x10 0  +0x14 0x40  +0x18 0x40+4*count
+    +0x40 u32 offsets[count] (into the string area), then NUL-terminated strings,
+    zero-padded to 4 bytes
+
+All 465 rebuild byte-identically; 9,699 strings. Text is ASCII plus EUC-JP
+symbols (`<○>` is a controller button), with codes `[Speaker]`, `\n`,
+`$zoom13;`, `$colc0c0c0;`. 127 strings in `cf\en` are Shift-JIS developer
+test lines ("11テストメッセージ\n表示中").
+
+`.txd` (`yosikawa\*.txd`, menus): u32 offsets (count = first offset / 4)
+then NUL-terminated strings; the game font re-uses some EUC-JP codes for
+Latin letters (`D` + 0xA4A1 + `mmerung` is "Dämmerung").
+
+Movie subtitles (`movie\en\*.txt`) are EUC-JP with timing lines; the
+`#scn` scene lists (`cf\cf*.txt`) and quest text (`iwase\*.txt`) are
+Shift-JIS.
+
+## Scripts: `.sb` (465: `cf\sc*.sb` and `model\map\*.bin`)
+
+A stack machine in `OV01.OVL` (Episode I ran Java here). The full instruction
+set, literal kinds (ops 03/04/06/07) and argument types are in
+[SCRIPTS.md](SCRIPTS.md). Found 2026-11-05:
+
+* opcode handler table at OV01 0xab5fc0 (46 entries), lengths at 0xab5f90;
+* natives registered per class with `FUN_00a9cdb0(class_name, table)`, the
+  tables being `{char *name, handler}` pairs in the boot ELF's data, e.g.
+  "runtime" at 0x3e6e40 (setPlayer, Item, TimeAttack, GetAnalogR,
+  progEffect, changeRobo, message, jumpCF, mapChange, Fade, setFlag,
+  getFlag, setFog, setItai, setLight, System, mpeg2, adx, ...), "talk"
+  at 0x3ec868 (check, reset, smsg, msgDtl, winClose, resume, enableFlags,
+  isDispMsg, wait, menuAddItem, ...), the camera class at 0x3e70b8;
+* `FUN_00a9d148(class, name)` resolves an import to `class << 16 | index`
+  at load; `FUN_00a9e5b8` (opcode 0x15) calls it.
+
+File layout:
+
+    +0x00 "SB  "  +0x04 1  +0x08 0  +0x0C entry count  +0x10 import count
+    +0x14 code  +0x18 globals  +0x1C (empty)  +0x20 entry table  +0x24 import table
+    +0x28 source name ("nakahara\sc1010": author folder and script)
+    entries: {u32 name offset, u32 code word}     e.g. locater, kowaremono, goteinei, mapjump
+    imports: {u16 function offset, u16 class offset} into the string pool after the table
+
+Code is 16-bit words; an operand is the 32-bit value in the next two words;
+jump targets and entry points count words from the start of the code.
+
+| op | len | name | | op | len | name |
+|---|---|---|---|---|---|---|
+| 00 | 1 | nop | | 17 | 1 | waitfor2 |
+| 01 | 3 | op (1 add 2 sub 3 mul 4 div 5 mod 6 or 7 and 8 shr 9 shl 10 neg 11 eq 12 gt 13 lt 14 ge 15 le 16 ne 17 land 18 lor) | | 18 | 1 | dup |
+| 02 | 3 | line (no effect) | | 19 | 1 | drop |
+| 03 04 06 07 | 3 | push immediate | | 1A 1B | 1 | load global/local [pop] |
+| 05 | 3 | mark (no effect) | | 1C | 1 | yield |
+| 08 09 | 3 | load global/local | | 1D | 1 | end |
+| 0A 0B | 1 | store global/local | | 1E | 1 | sleep N frames |
+| 0C 0D | 1 | store, keep value | | 1F 20 | 1 | send / receive |
+| 0E | 3 | jmp | | 21-24 | 1 | inc/dec global/local |
+| 0F 10 | 3 | jz / jnz | | 25 | 4n+5 | switch: n, default, n x {key, target} |
+| 11 | 1 | enter | | 26 27 | 1 | push 0 |
+| 12 | 3 | call | | 28-2D | 1 | push 1..6 |
+| 13 14 | 1 | ret / ret value | | | | |
+| 15 | 3 | native (import index) | | | | |
+| 16 | 1 | waitfor | | | | |
+
+Native arguments are pushed as value then type, then the count:
+`push 4; push1; push 0x200004; push3; push 2; native talk.msgDtl` passes
+int 4 and text 4 ("[Canaan]What is this thing?"). Type 3 values are
+`0x20 << 16 | index into the .sbl`.
+
+Proof: all 465 scripts disassemble to the exact end of their code with every
+jump, switch target and entry point on an instruction and every native in
+the import table; 2,609,696 instructions, 227 distinct natives (the most
+used are the `cfe.stKy*` cutscene keyframe setters and camera calls).
+
+## Sound: KORG `.vsf` / `.prj` / `.mid`
+
+The driver is `IOP\KORGIVAG.IRX` ("KORG IOP Sound Driver ... (C)2001-2004
+KORG Inc."); it ships with its symbol table, and fine tune (1/64 semitone)
+and the per-song effect NRPNs read from its code are in [MUSIC.md](MUSIC.md). Field music is a Standard MIDI File (type 0, 480 PPQN, real
+tempo) played through a project's programs; sound effects use the same
+banks.
+
+`.vsf` (1,074): `"VSFp"`, u32 0x10, count, sample bytes, two stale words,
+then per sample a 0x28-byte record `{u32 ?, u32 ?, u16 rate, u8 root, u8
+fine, u32 ?, u32 ?, u32 size, name[16]}` and `size` bytes of SPU ADPCM. All
+banks walk to the exact end of file: 6,953 records, 3,220 "-- no sample --"
+placeholders (stale memory, not audio), 3,733 real samples. Every real
+sample has an end flag: 3,425 one-shots (flag 1, then the usual silent pad
+frame) and 308 loops (flag 3 back to the frame flagged 4). Of 4.6 M frames,
+6,383 have impossible headers: 6,374 in placeholders and 9 in tail padding
+after an end flag (one holds UTF-16 `\DosDevices\R:\...` from the authoring
+PC). Decode health: median peak 31,028; 55 samples clip at 1-16 values;
+none runs away.
+
+`.prj` (1,074): `PRJp` (name), `KEYp` (count x 0x30), `PRGp` (count x
+0x180). A key record is two 16-byte layers and the sample's name:
+
+    +0 u16 sample  +2 u16 SPU ADSR1  +4 u16 SPU ADSR2  +6 volume  +7 pan (64 centre)
+    +8 s8 transpose  +9 s8 fine (1/64 semitone)  +10 0xFF = pitch follows the key, 0 = fixed
+    +11 choke group  +12 hold (non-zero: note-off ignored, the one-shot plays out)
+    +13 bit 0 = SPU2 core (not an on/off flag: a layer sounds when it names a sample)
+
+The sample index matches the same-named `.vsf` sample in 6,921 of 6,962
+records (the rest are name typos). A program is name[16], parameters, and
+u16 key_map[128] at +0x40 (MIDI key -> key record, 0xFFFF silent).
+"Default Program" maps keys one-to-one (groove loops, fixed pitch);
+instruments map every key to one record, often with two layers panned
+apart. Program N is the song's program change N. The default envelope
+0x808F/0xDFE6 is instant attack, full sustain, exponential release.
+
+`prj.py` writes a SoundFont 2 per song (each program also mirrored into bank
+128, so a General-MIDI player's channel 10 plays it). The kit's WAV renders
+come from `spu2synth.py`, which models the KORG driver and the SPU2, reverb
+included: [MUSIC.md](MUSIC.md).
+
+## Movies, voices, clips
+
+Movie subtitles `movie\en\<movie>.txt` (45, EUC-JP, `mm:ss:ff` cues, `;`
+comments): the engine compacts the cues into the head of the Sofdec work
+block and starts the decoder after them (64-byte aligned), so displayed text
+can grow only to the next 64-byte boundary; see MODDING.md.
+
+`.sfd` (50): CRI Sofdec MPEG-1 512x448 (SAR 200:219) with ADX stereo
+(0xC0) and AC3 (0xC1): 5.1 in 48 movies, stereo in `s040110` and `s06over`.
+`browse --movie-audio ac3|both` keeps the AC3 track bit-exact (and writes it
+raw as `<movie>.ac3`). `.ipu` (90): Sony IPU clips, 256x224/256x256,
+25 fps. `.adx` (657): CRI ADX. ffmpeg reads all three.
+
+## Models: `.pxy`, `.xhr`, `.xap` (notes, not decoded yet)
+
+`.pxy` header (shion00): magic, float version 0.15, u32 flags, u32 size,
+name[32], then counts and offsets: 23 materials (0x60 records at 0x4F0,
+Maya names `lambert88`...; word +0x28 >> 16 is the `.txy` entry index of the
+material's texture, which is the material-to-texture link Episode III's kit
+lacks), 10 nodes (0x70 records at 0xD90: name, then a byte list of joint
+indices = the mesh's skinning palette), node matrices at 0x11F0/0x25B0/0x3970,
+a draw list at 0x3C9E0 `{VIF offset, qword count, material?, ..., bounding
+sphere}`, and the geometry: a VIF stream (0x3BF0 to 0x3C9E0 here) of 221
+`STCYCL` + `UNPACK` + `MSCNT` batches with V4-32 (positions/normals), V2-32
+(UVs) and V4-8 (colours or weights) unpacks; it walks to the exact start of
+the next table. `.xhr` 2.3/2.4: 85 joints in shion00, names with `|`
+separators (`Jseb`, `Jkata_L`, `Jhead`). `.xap` 1.2 and `.fap` 1.2: motion
+and face motion, offset tables, not decoded.
+
+## Small side files
+
+Boot screens, title logos, the save icon, `batdat.us` battle strings and the
+structure of `.id`, `.epf`, `.ene`, `.dev`, `.fap`, `.jrd`:
+[research/small-files.md](research/small-files.md).

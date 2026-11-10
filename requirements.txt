@@ -1,0 +1,16 @@
+# Runtime dependencies for the Xenosaga II extractor kit.
+#
+#   python -m pip install -r requirements.txt
+#
+# The app bundles carry numpy, and the launchers (launch.command, launch.bat,
+# launch.sh) install it into .venv/ on first run when the Python they find
+# lacks it. Everything else (disc reading, TOC, ARX, textures, text, scripts,
+# KORG sound banks, SoundFonts, write-back) is the Python standard library,
+# 3.9 or newer.
+numpy>=1.21        # the music renderer, spu2synth.py (tested with numpy 2.0)
+#
+# Optional program, found on PATH or bundled under tools/ (see packaging/):
+#   ffmpeg      movies (.sfd/.ipu) to MP4, .adx voices to WAV
+#
+# Building the double-click app bundle (build.py) also needs PyInstaller:
+#   python -m pip install pyinstaller

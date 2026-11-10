@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+# extraction output: game data never goes in the repository
+out/
+# the launchers' private Python environment (numpy)
+.venv/
+*.iso
+/*.spec

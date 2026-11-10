@@ -1,0 +1,16 @@
+Portable binaries bundled with this release:
+
+  ffmpeg        macOS builds: static, from https://ffmpeg.martin-riedl.de
+                Windows builds: BtbN GPL win64 build,
+                sources at https://github.com/BtbN/FFmpeg-Builds
+                FFmpeg is licensed under the GPL; sources at
+                https://ffmpeg.org — these are unmodified upstream binaries.
+
+It is redistributed here only so the extractor's movie conversion works on a
+fresh machine with nothing else installed. Replace the contents of this
+tools/ folder with your own build at any time; the kit also finds an ffmpeg
+on PATH.
+
+fluidsynth (used to render the songs to WAV) is not bundled: install it with
+your package manager if you want the WAV renders (brew install fluid-synth).
+Without it you still get each song's MIDI and SoundFont.

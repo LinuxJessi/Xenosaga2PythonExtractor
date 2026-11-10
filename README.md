@@ -1,0 +1,125 @@
+# Xenosaga Episode II Python Extractor
+
+Unpack, browse and edit **Xenosaga Episode II: Jenseits von Gut und Böse**
+(PS2, USA, SLUS-20892 / SLUS-21133) with Python and numpy. Point it at your
+own disc images and you get the game's files in forms your computer opens:
+textures as PNG, sound effects and samples as WAV, the field music as MIDI
+with a SoundFont made from the game's own instruments and a WAV rendered the
+way the PS2 plays it, dialogue as UTF-8 text you can edit and write back,
+the scene scripts as readable assembly with the lines they speak, cutscenes
+as MP4.
+
+The kit ships no game data. You need your own copy of the discs.
+
+This is the Episode II sibling of the
+[Episode I extractor](https://github.com/LinuxJessi/Xenosaga1PythonExtractor)
+and the [Episode III extractor](https://github.com/LinuxJessi/Xenosaga3PythonExtractor),
+built the same way, with code borrowed from both where the formats are shared
+(each borrowed module says so at the top).
+
+## Running it
+
+Python 3.9 or newer, and numpy (the music renderer needs it). The app
+bundles carry numpy, the launchers install it into `.venv/` on first run if
+your Python lacks it, and from a terminal you install it once (first line
+below). ffmpeg (movies) is used when found; the app bundles carry it too.
+
+```sh
+python -m pip install -r requirements.txt     # once: numpy
+python cli.py dump    --iso "Disc 1.iso" --iso "Disc 2.iso" --out out/ --code
+python cli.py verify  --out out/
+python cli.py browse  --out out/
+```
+
+`dump` unpacks both discs into `out/dump/chain0` (shared by both discs),
+`chain1` (Disc 1) and `chain2` (Disc 2), with `out/manifest.csv` listing
+every object, its sector, size, sha1 and kind. `verify` re-hashes the dump
+against the manifest. `browse` converts it into `out/browse/`; pick parts
+with `--kinds textures,xtx,fonts,text,scripts,audio,music,images,movies`.
+
+Other commands:
+
+```sh
+python cli.py list        --iso "Disc 1.iso"
+python cli.py sb          --iso "Disc 1.iso" --path 'cf\sc1010.sb'
+python cli.py natives     --iso "Disc 1.iso" --iso "Disc 2.iso" --out natives/   # every native: calls, argument types, listings
+python cli.py text-export --iso "Disc 1.iso" --out text/
+python cli.py dialogue    --iso "Disc 1.iso" --iso "Disc 2.iso" --out lines/ --voice   # every line, in play order, with voice clips
+python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
+python cli.py patch       --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
+python cli.py recolor     --iso "Disc 1.iso" --out pink.iso          # KOS-MOS's hair, every copy
+python cli.py self-test
+```
+
+Every module that makes a claim has a `--self-test`.
+
+The Episode II demo on *Xenosaga Freaks* (SLPS_253.53) works too: its chain sits in
+`EXP\` and the kit finds it there. `list`, `dump`, `sb` and `natives` read it; its
+scripts are the older form with their (Japanese, EUC-JP) text inside the `.sb` instead
+of an `.sbl`, which `sb` shows inline and `natives --out` writes to `strings.tsv`
+([docs/SCRIPTS.md](docs/SCRIPTS.md)).
+
+Prefer a window? `python gui.py` (or double-click `launch.command` on a Mac,
+`launch.bat` on Windows, `launch.sh` on Linux) opens a local page with a card
+per command; the cards are built from the CLI itself, so new commands appear
+on their own. `python build.py` makes a standalone app with PyInstaller
+(`packaging/`), and `.github/workflows/release.yml` builds release bundles.
+
+## What you get
+
+| | |
+|---|---|
+| Textures | every `.txy` page: 65,938 PNGs, named the way the artists named them (`shion00_hair`, `kosmos00_face`), skybox faces and animated pages one per bank; plus 1,333 more from the pages inside effect files (`textures_png/_embedded/`) |
+| UI sheets | the 85 `.xtx` sheets: citizen portraits, item icons, the title menu words |
+| Fonts | the four glyph sheets of each font, plus the proportional metrics |
+| Dialogue | all 465 text banks (9,699 lines) as editable UTF-8; menus, movie subtitles, quest text |
+| Dialogue lines | `dialogue`: every spoken line in play order (8,318 lines from 363 scripts, speakers split off, branches and choices marked), the 45 movies' subtitles and 80 real-time events as `.srt`, and with `--voice` one WAV per timed line ([docs/DIALOGUE.md](docs/DIALOGUE.md)) |
+| Scripts | all 465 scene and map scripts disassembled, with every native call named (`talk.msgDtl`, `runtime.mapChange`) and every spoken line inline |
+| Sound | 3,733 named samples from 1,074 KORG banks, as WAV with loop points |
+| Music | the 31 field and menu songs: the MIDI, a SoundFont 2 from the song's own project, and a WAV rendered the way the PS2 plays it, from KORG's driver rules and the SPU2's own reverb with the disc's presets (`spu2synth.py`). Checked against a game rip on five songs ([docs/MUSIC.md](docs/MUSIC.md)) |
+| Small files | `--kinds small`: boot screens, title logos, the save icon, the 1,085 battle strings of `batdat.us`, and a table of what every map/effect/motion side file is (`smallfiles.py`) |
+| Movies | `.sfd` cutscenes and `.ipu` monitor clips to MP4 (ADX stereo, or the AC3 5.1 track with `--movie-audio ac3`/`both`), `.adx` voices to WAV |
+
+## Writing back
+
+`text-export` writes one file per text bank; edit the lines, keep the
+`### NNNN` markers and the game's codes (`[Speaker]`, `\n`, `$zoom13;`).
+`text-import` rebuilds every changed bank, refuses the whole import if one
+no longer fits its slot on the disc, and patches a copy of the disc in place,
+reading every write back. Lines may grow or shrink inside the slot. A
+same-length edit changes exactly the edited bytes of the image (checked).
+Checked in PCSX2: a recoloured title menu, and subtitle files rewritten and
+relocated past the end of the image (docs/MODDING.md).
+
+## How it is built
+
+The same reading stack as the Episode I kit: `iso9660.py` (files on the
+disc), `chains.py` (the bigfiles as one byte space), `toc.py` (the table of
+contents, including the name compression Episode II added), `arx.py`
+(Monolith's compression). Decoders: `txy.py`, `xtx.py`, `font.py`, `sbl.py`,
+`sb.py`, `vsf.py`, `prj.py`, `songfx.py`, `spu2synth.py`, `midi.py`, `smallfiles.py`; `browse.py`
+maps them over a dump; `repack.py`, `textpack.py` and `recolor.py` write back;
+`gui.py`, `build.py` and `toolfind.py` are the window, the app build and the
+ffmpeg finder. Byte layouts and how each was proven:
+[docs/FORMATS.md](docs/FORMATS.md). Writing your own changes:
+[docs/MODDING.md](docs/MODDING.md). What `browse` writes:
+[docs/BROWSING.md](docs/BROWSING.md). Music and the KORG driver:
+[docs/MUSIC.md](docs/MUSIC.md). The script machine: [docs/SCRIPTS.md](docs/SCRIPTS.md).
+Small side files: [docs/research/small-files.md](docs/research/small-files.md).
+Curiosities left on the disc: [docs/FINDS.md](docs/FINDS.md); background:
+[docs/HISTORY.md](docs/HISTORY.md); the code tour: [docs/CODEBASE.md](docs/CODEBASE.md).
+Changes: [docs/UPDATES.md](docs/UPDATES.md).
+
+## Still open
+
+* Models: `.pxy` geometry is a VIF stream the kit can walk but not yet turn
+  into meshes; skeletons (`.xhr`) and motion (`.xap`) are not decoded.
+* Two multi-palette menu sheets (`yosikawa\obj01.xtx`, `ctrl01.xtx`).
+* Music: the renders follow the driver and the SPU2 and sit close to a game
+  rip on the five songs compared, but portamento, the pitch envelope, the
+  driver's volume sweeps and the songs' loop points are not modelled, and the
+  low drums still decay a few dB differently from the rip. A PSF2 rip would
+  allow sample-exact checks (docs/MUSIC.md).
+* Subtitle text can only grow by a few bytes per movie (the engine stores it in
+  front of the movie decoder's work area; see docs/MODDING.md). Relocating a
+  file past the end of the disc image is proven in the game.
