@@ -141,9 +141,12 @@ COMMAND_HELP = {
               "with the kit's copy of Monolith's packer, so a clean run proves the codec "
               "both ways.",
     "browse": "Convert a dump into files your computer opens, under <code>OUT/browse/</code>: "
-              "textures and UI sheets as PNG, samples as WAV, songs as MIDI + SoundFont "
+              "textures and UI sheets as PNG, every model as a <code>.glb</code> Blender opens "
+              "(textured, with its skeleton), samples as WAV, songs as MIDI + SoundFont "
               "and a WAV rendered the way the PS2 plays it, dialogue as UTF-8, scripts as readable listings, "
               "movies as MP4 (ffmpeg).",
+    "model": "One model straight from the disc to a <code>.glb</code> for Blender: the mesh with the "
+             "textures and skeleton of the same name. <code>browse</code> does every model at once.",
     "sb": "Disassemble one scene or map script, with every native call named and every "
           "spoken line shown beside the instruction that uses it. "
           "Example path: <code>cf\\sc1010.sb</code>.",
