@@ -1,5 +1,24 @@
 # Updates
 
+## 2026-11-10 (later): fixes from the translation review
+
+Four outside models reviewed the text work; every point and what was done is
+in `docs/panel/2026-11-10-translation/RESOLUTION.md`. In short:
+
+* **Writers** never patch their input (also not through a link) and publish a
+  complete, verified image or nothing (`repack.patch_copy`). Unknown builds
+  are read-only; text needs the exact known executable.
+* **The tree** is unambiguous (`⟦23⟧` for a leading `#`), block keys are
+  checked (order, duplicates, missing), embedded NULs and edits that would
+  hide a string from the next export are refused, and a manifest ties the
+  tree to its disc (`--rebase` overrides).
+* **`textcodec.py`**: text is read per build. USA `é` is the Latin-1 byte
+  0xE9; typed characters are checked against the disc's fonts.
+* **Subtitles**: bounds measured on the disc's own retail files (line bytes,
+  line width by a port of the game's width function, lines per cue), on top
+  of the 64-byte rule. Bounds, not proven limits.
+* **`font-rebuild`** refuses to apply nothing, and says what it applied.
+
 ## 2026-11-10: models open in Blender
 
 `browse` now writes every `.pxy` model as a `.glb` (`--kinds models`, on by

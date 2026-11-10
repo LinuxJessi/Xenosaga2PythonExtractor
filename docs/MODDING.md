@@ -1,8 +1,17 @@
 # Modding Xenosaga Episode II with the kit
 
 Everything here writes into a **copy** of your disc image. The original is
-never opened for writing; each command copies it first when `--out` names
-another file, and every write is read back before the command returns.
+never opened for writing. `--out` must name another file: the input itself is
+refused, also through a symlink or a hard link. The copy is made and patched
+under `<out>.partial` and takes the name `<out>` only after every write has
+been read back, so a refused or failed command leaves no half-written image
+and an existing `<out>` as it was (`repack.patch_copy`).
+
+Only discs the kit knows are patched: USA SLUS_208.92 / SLUS_211.33, Japan
+SLPS_253.68 / SLPS_253.69, the demo SLPS_253.53, and for text also only with
+the exact executable the rules were read from (sha256 checked). Any other
+serial can be listed, dumped and browsed; every writer refuses it and says
+which serial it saw.
 
 ## How writing works
 
@@ -59,8 +68,67 @@ Models live in chain 0, which is on both discs: patch each disc you play.
 
 ## Text: `text-export` / `text-import`
 
-See the README. Banks are rebuilt whole, so lines may grow or shrink inside
-the bank's slot; an import that would not fit is refused as a whole.
+Banks are rebuilt whole, so lines may grow or shrink inside the bank's slot;
+an import with any problem is refused as a whole and nothing is written.
+
+### The tree
+
+`text-export` writes one file per text object and `xs2-text-export.json`,
+the manifest. In a block file (`### KEY` lines):
+
+* the line after `### KEY` is the string; if you type several lines they are
+  joined with the game's `\n`; empty lines at the end of a block are dropped;
+* **a line that starts with `#` is a comment**, not text. To begin a string
+  with `#`, write `⟦23⟧`: the export does so itself. A `#` later in the line
+  is plain (the Japanese `#XX` codes in the middle of a line are untouched).
+  No retail string starts with `#` (0 of 9,699 + 903 + 1,085 USA strings, 0 of
+  17,225 + 902 + 1,085 Japanese, 0 on the demo), and none holds a raw line
+  break, so this costs nothing today; it is there for what you type;
+* `⟦XX⟧` is a raw byte; a string may not contain `⟦00⟧`;
+* every block must come back once, in the export's order. A missing,
+  repeated, unknown or moved key is refused (all block kinds: banks, inline
+  scripts, menus, battle strings).
+
+The manifest holds the build and the sha1 of every exported object.
+`text-import` refuses a tree without it, a disc of another build, and any
+object that is not byte for byte the one the text came from, with
+`--rebase` as the explicit override. A tree exported from Disc 1 imports into
+Disc 2 of the same region (chain 0 is identical; each object is still
+checked), which is how both discs get the same dialogue edits.
+
+### What you can type
+
+The two builds read text differently (`textcodec.py`, from the print
+functions in `font.py`):
+
+* **USA.** A letter with an accent is one Latin-1 byte: type `é`, the disc
+  gets 0xE9, the game draws cell 0xE9 + 0x80 of the font. The font's whole
+  0xA0-0xFF block is inked (`¡ ¿ ß ç ñ Ø æ ©` and the accented capitals were
+  looked at). The few two-byte codes the USA print function accepts read as
+  their symbols: `○ □ ■ △ ☆ ★ × — 「 」 ♪ Ω`. Pairs with lead byte A4 are
+  shown as escapes, `⟦A4⟧⟦A2⟧`, because the USA font does not hold kana
+  there: A4A1-A4A5 are `ö é è Ä ®` to the eye (the retail text writes `é` as
+  A4A2 and `®` as A4A5) and the rest of that row is a placeholder mark.
+  Kana and kanji cannot be typed: the USA print function cannot draw them.
+* **Japan and the demo.** EUC-JP (Python's `euc_jis_2004`).
+
+Every non-ASCII character you type into a changed string is checked against
+the fonts of the disc being patched (`textcodec.check_typed`), and refused
+with the reason when
+
+* the build cannot encode it, or it would need an EUC prefix byte (0x8E
+  half-width kana, 0x8F plane 2): the game reads one- and two-byte characters;
+* the game would read its bytes differently (USA: `¤`, `¦` and the soft
+  hyphen always swallow the next byte);
+* its code falls to the font's fallback cell 0x7F (Japan: `～` U+FF5E, any
+  kanji outside level 1 and the 87 the executable lists), its cell is out of
+  the draw call's reach, or its glyph cell is blank in font0 or font1.
+
+An explicit `⟦XX⟧` escape is never checked. Unchanged strings are never
+checked. The retail text itself passes: retyped through this check, none of
+the 587 non-ASCII USA strings and none of the 15,536 Japanese ones would be
+refused (one of the demo's 5,055 would: a code with no cell in its font). Not
+checked: `$` codes, `%` directives and `[Speaker]` tags you change.
 
 ### Growing a text bank: `text-import --grow` (not yet seen in game)
 
@@ -123,9 +191,9 @@ length or shorter; `--grow` does not apply to it.
 
 | Text | On the disc | In the tree | What an edit may do |
 |---|---|---|---|
-| menus | `yosikawa\MainMenu.txd`, `Tutorial.txd`, `Location.txd` | `X.txd.txt`, `### NNNN` blocks | strings grow and shrink; the file must stay in its slot |
-| movie subtitles | `movie\en\*.txt` (Japan `movie\*.txt`) | `X.sub.txt`, the file itself | the 64-byte rule below; `--grow` may relocate the file |
-| quest, citizen and treasure text | `iwase\*.txt` (Shift-JIS) | `X.sjis.txt`, the file itself | the file must stay in its slot |
+| menus | `yosikawa\MainMenu.txd`, `Tutorial.txd`, `Location.txd` | `X.txd.txt`, `### NNNN` blocks | strings grow and shrink; the file may not need more sectors than the original |
+| movie subtitles | `movie\en\*.txt` (Japan `movie\*.txt`) | `X.sub.txt`, the file itself | text only, inside the bounds below; `--grow` may relocate the file |
+| quest, citizen and treasure text | `iwase\*.txt` (Shift-JIS) | `X.sjis.txt`, the file itself | only the text between double quotes; the file may not need more sectors than the original |
 | battle names and descriptions | `yamamoto\batdat.us` (Japan `batdat.bin`) | `batdat.us.txt`, `### S<section> @<offset> max N bytes` blocks | each string in place: same length or shorter |
 
 An unedited export imports as "no text changed" on every disc, and each
@@ -139,18 +207,38 @@ Why these limits, and how sure they are:
 
 * **Menus** are read into static buffers (`FUN_00228570`: `MainMenu.txd` to
   0x6A5BC0 and `Tutorial.txd` to 0x6A9BC0, 16,384 bytes apart;
-  `Location.txd` through a pointer in `FUN_0023ad18`). A slot is whole
-  sectors and so is the read, so a file that stays in its slot is read
-  exactly as before. They are never relocated. Read from code, not seen in
-  game.
-* **Quest text**: the loader (`FUN_00232100`) has not been read; the same
-  "stay in the slot" rule is applied for the same reason.
+  `Location.txd` through a pointer in `FUN_0023ad18`). The read is whole
+  sectors of the TOC size, so the rule is **no more sectors than the
+  original**, whatever the slot is (on the retail discs every slot equals the
+  sector-rounded size anyway: 495 of 495 USA text objects, checked on all
+  five discs). They are never relocated. Read from code, not seen in game.
+* **Quest text**: `FUN_00232100` allocates by the file's TOC size
+  (`FUN_002320b0` asks `FUN_0019bc68` for the size and passes it to the
+  allocator `FUN_0020b738`), so a larger file might load; that has not been
+  tried, and the same "no more sectors" rule is applied. Only the text
+  inside `"..."` may change: the rest of the file (record numbers, braces,
+  field names, the ruler lines of the Japanese files) is compared with the
+  original. The files are Shift-JIS; on a Japanese disc a typed character is
+  checked through its JIS code (assuming the game converts one to the other),
+  on a USA disc typed non-ASCII is refused (how the USA build reads high
+  bytes in these files has not been read).
 * **Battle database**: loaded to a static buffer (OV01,
   `FUN_00a83dc0(path, 0x61d040)`) of unknown size, with 220 bytes left in its
   last sector on the USA disc. Its strings are found through 16-bit fields of
   records whose layout is not decoded, so a string is replaced where it is
-  and may not get longer (`smallfiles.batdat_replace`).
-* **Subtitles**: see "Subtitle limit" below, and the note under it.
+  and may not get longer (`smallfiles.batdat_replace`). An edit that would
+  change which strings the next export finds is refused (the kit recognises
+  a text section by the first byte of its first string). Fields that merely
+  equal an offset are left alone by design; that they are numbers and not
+  pointers into the middle of a string was tested: of the 211 such values on
+  the USA disc, 209 are the same number at the same place in the Japanese
+  file, whose strings have other lengths (of 1,095 real string offsets, 31).
+* **Inline scripts (Japan)**: 470 variable slots in 119 scripts hold a value
+  that falls inside a pool string rather than at its start. They look like
+  numbers (281 are multiples of ten; 7893, 19456, 2800, 400, 2000 lead the
+  list), but a pointer into the middle of a string cannot be ruled out from
+  the files, and an in-place edit would show through it.
+* **Subtitles**: see "Subtitle limit" below, and the notes under it.
 
 The files of the two whole-file kinds must come back exactly as you want
 them on the disc: line ends are kept as they are (LF in the subtitle files,
@@ -229,6 +317,36 @@ story movie is `movie\s010100.sfd` (the news report), its subtitles
   The packing is done in place and unchecked. `moviesub.py` also refuses
   files the game's own parser would mangle: a first cue that is not at frame
   0 with too little text above it, runs of very short cue lines, a time not
-  followed by a tab or blank, a list not closed by an `end` line.
+  followed by a tab or blank, a list not closed by an `end` line, a backslash
+  not followed by `n` (the packer makes every backslash a line break and
+  drops the byte after it, 0x1e79b4-0x1e79cc; all 879 retail backslashes are
+  `\n`), a cue at frame 65535 or later (16-bit field, 0xFFFF ends the list).
+
+  **Bounds from the retail files (added 2026-11-10, after review).** Since
+  the 64-byte rule is not the mechanism, `text-import` also keeps an edit
+  inside what the retail game is known to display, measured on the disc being
+  patched:
+
+  | Disc | longest line (bytes) | widest line (pixels, the game's width function) | most lines in a cue |
+  |---|---|---|---|
+  | USA Disc 1 (20 files) | 51 | 454 | 2 |
+  | USA Disc 2 (25 files) | 49 | 445 | 2 |
+  | Japan Disc 1 (20 files) | 75 | 451 | 1 |
+  | Japan Disc 2 (25 files) | 65 | 425 | 2 |
+  | demo (3 files) | 50 | 451 | 1 |
+
+  The widest line is close to 450 pixels on every disc, in both languages,
+  though the byte lengths differ by half: the authors seem to have written to
+  a width. No line
+  may be longer or wider than these, no cue may have more lines, and the cue
+  list itself (how many cues, at which frames) may not change. **These are
+  not proven limits of the game.** They say only that text this long has
+  been seen to work. They do fit the one failure on record: the line that
+  broke playback was 52 characters longer than a retail line, so several
+  hundred pixels wider than the 454 the widest retail line reaches, and
+  wider than the 640-pixel screen. The width function is a port of
+  `FUN_00195938` (`font.Measurer`), started in the state the packer sets
+  (`$prop1;$han1;$xx1,8;`); the Japanese function's `$`-code handling was
+  not read and is assumed equal.
 * **KOS-MOS's hair** is patched in both test discs but she is not on screen in
   the first minutes, so it is not yet checked in the game.
