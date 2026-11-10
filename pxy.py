@@ -134,7 +134,7 @@ class MaterialState(object):
 
     @property
     def key(self):
-        return (self.tex0, self.clamp, self.shader, self.sw, self.tw)
+        return (self.tex0, self.clamp, self.shader, self.sw, self.tw, self.alpha)
 
 
 class Batch(object):
@@ -343,11 +343,16 @@ def _decode_mesh(buf, cur, kind):
     b = Batch()
     b.off, b.n, b.kind, b.flags = c.off, n, kind, hw
     b.skin_mode = hw & 0x1E
+    if b.skin_mode not in (0, 2, 4, 8):          # the only modes the microcode's skinning was read for
+        raise PxyError("mesh batch at %#x: skin mode %#x not understood" % (c.off, b.skin_mode))
     raw = np.frombuffer(buf, "<u4", c.count * 4, c.data_off).reshape(-1, 4)
     f = np.frombuffer(buf, "<f4", c.count * 4, c.data_off).reshape(-1, 4)
     b.pos = f[1:n + 1, :3].astype(np.float64)
     b.nrm = f[n + 1:, :3].astype(np.float64)
-    b.st = np.stack([f[1:n + 1, 3], f[n + 1:, 3]], axis=1).astype(np.float64)
+    # T shares its word with the restart flag (bit 0): cleared here, so two vertices that
+    # differ only in the flag still have the same T
+    t = (raw[n + 1:, 3] & np.uint32(0xFFFFFFFE)).view("<f4")
+    b.st = np.stack([f[1:n + 1, 3], t], axis=1).astype(np.float64)
     b.adc = (raw[n + 1:, 3] & 1).astype(bool)
     b.colors = b.weights = b.slots = b.face = None
     rest = {}
@@ -409,6 +414,8 @@ def batch_joints(p, node, b):
         used[:, 1:] = False
     else:
         ended = np.logical_or.accumulate(~used, axis=1)
+        if (used & ended).any():                 # the microcode stops at the first 255
+            raise PxyError("batch at %#x: palette byte after the end of its list" % b.off)
         used &= ~ended
     if (s[used] & 3).any():
         raise PxyError("batch at %#x: palette byte not a multiple of 4"
@@ -838,8 +845,7 @@ def to_glb(p, txy_data=None, x=None, name=None):
                 cols += [np.concatenate(J), np.concatenate(W)]
             first_i, inv = _weld(cols)
             tri = inv[idx]
-            keep = (tri[:, 0] != tri[:, 1]) & (tri[:, 1] != tri[:, 2]) & \
-                (tri[:, 0] != tri[:, 2])
+            # degenerate triangles are kept: the count then equals the file's own
             n_tris += len(tri)
             nrm = cols[1][first_i]
             ln = np.linalg.norm(nrm, axis=1, keepdims=True)
