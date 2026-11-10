@@ -1,4 +1,9 @@
-"""textpack.py — Episode II's dialogue as an editable UTF-8 tree, and back.
+"""textpack.py — Episode II's text as an editable UTF-8 tree, and back.
+
+Dialogue banks are described first; menus, movie subtitles, quest text and the
+battle database's strings follow the same export / import path and are
+described at "the other text files" below. On a Japanese disc the dialogue is
+inside the scripts ("inline text" below).
 
 ``export_text`` writes one ``.txt`` per ``.sbl`` text bank (field and scene
 dialogue, map messages, quest prompts) under ``OUT/chainN/<in-game path>.txt``::
@@ -56,6 +61,7 @@ from typing import Dict, List, Optional, Tuple
 
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import region
 import sbl
 from chains import CHAINS, ChainReader, available_chains
 from iso9660 import IsoImage, SECTOR
@@ -203,6 +209,304 @@ def plan_inline(iso: IsoImage, root: Path, changed, problems) -> None:
             changed[(chain, e.path)] = bytes(out)
 
 
+# ------------------------------------------------------ the other text files
+#
+# Four more kinds of text, each with its own file in the tree:
+#
+#   yosikawa\*.txd                 menus      X.txd.txt      ### NNNN blocks, like a bank
+#   movie\en\*.txt, movie\*.txt    subtitles  X.sub.txt      the file itself, as UTF-8
+#   iwase\*.txt                    quests     X.sjis.txt     the file itself (Shift-JIS), as UTF-8
+#   yamamoto\batdat.us|.bin        battle db  batdat.XX.txt  ### S<section> @<offset> max N bytes
+#
+# Every kind is exact both ways: rebuilding from an unedited export gives the
+# original bytes (checked for every such object on USA Disc 1 and 2, Japan
+# Disc 1 and 2 and the demo), so an untouched file is never written. What may
+# change, and why:
+#
+#   .txd       strings may grow and shrink (the offset table is rebuilt); the
+#              file must stay inside its slot. The game reads these into static
+#              buffers (FUN_00228570: MainMenu.txd to 0x6A5BC0, Tutorial.txd
+#              right after it at 0x6A9BC0, so 16,384 bytes for the first); a
+#              slot is whole sectors and the read is too, so staying in the slot
+#              leaves the read unchanged. Never relocated.
+#   subtitles  the 64-byte rule of moviesub.py; --grow may relocate the file
+#              (a relocated, comment-grown subtitle file played in the running
+#              game, docs/MODDING.md).
+#   quests     must stay inside its slot; never relocated (loader not read).
+#   battle db  each string in place, same length or shorter
+#              (smallfiles.batdat_replace says why).
+
+class TextError(ValueError):
+    pass
+
+
+_SJIS_LEAD = set(range(0x81, 0xA0)) | set(range(0xE0, 0xFD))
+
+
+def file_to_text(data: bytes, codec: str) -> str:
+    """A whole text file as editable text, lossless: line ends and tabs as they
+    are, characters where they decode and re-encode to the same bytes, ⟦XX⟧ for
+    every other byte. ``codec`` is the kit codec (EUC-JP) or "shift_jis"."""
+    sjis = codec == "shift_jis"
+    out, i, n = [], 0, len(data)
+    while i < n:
+        b = data[i]
+        if b < 0x80:
+            out.append(chr(b) if b >= 0x20 and b != 0x7F or b in (9, 10, 13) else f"⟦{b:02X}⟧")
+            i += 1
+            continue
+        if sjis:
+            size = 2 if b in _SJIS_LEAD else 1
+        else:
+            size = 3 if b == 0x8F else 2
+        piece = data[i:i + size]
+        try:
+            ch = piece.decode(codec)
+            if len(ch) == 1 and ch.encode(codec) == piece and ch not in "⟦⟧":
+                out.append(ch)
+                i += size
+                continue
+        except UnicodeDecodeError:
+            pass
+        out.append(f"⟦{b:02X}⟧")
+        i += 1
+    return "".join(out)
+
+
+def text_to_file(text: str, codec: str) -> bytes:
+    out, pos = bytearray(), 0
+    try:
+        for m in sbl._ESC.finditer(text):
+            out += text[pos:m.start()].encode(codec)
+            out.append(int(m.group(1), 16))
+            pos = m.end()
+        out += text[pos:].encode(codec)
+    except UnicodeEncodeError as e:
+        bad = e.object[e.start:e.start + 1]
+        raise TextError(f"{bad!r} (U+{ord(bad):04X}) cannot be written in {codec}, near "
+                        f"{e.object[max(0, e.start - 8):e.start + 8]!r}")
+    return bytes(out)
+
+
+def txd_parse(data: bytes) -> Tuple[List[bytes], bytes]:
+    """(strings, tail) of a .txd: u32 offsets (count = first offset / 4), then the
+    NUL-terminated strings back to back in table order; ``tail`` is whatever
+    follows the last string (zero bytes, or nothing)."""
+    import struct
+    if len(data) < 4:
+        raise TextError("too short for a .txd")
+    first = struct.unpack_from("<I", data, 0)[0]
+    n = first // 4
+    if first % 4 or not 0 < first <= len(data):
+        raise TextError("not a .txd (first offset)")
+    offs = struct.unpack_from(f"<{n}I", data, 0)
+    strings, pos = [], first
+    for o in offs:
+        if o != pos or o >= len(data):
+            raise TextError(f"not a plain .txd: string at {o:#x}, expected {pos:#x}")
+        end = data.find(b"\x00", o)
+        if end < 0:
+            raise TextError("a .txd string runs off the end")
+        strings.append(data[o:end])
+        pos = end + 1
+    return strings, data[pos:]
+
+
+def txd_build(strings: List[bytes], tail: bytes = b"") -> bytes:
+    import struct
+    offs, body = [], bytearray()
+    for s in strings:
+        if b"\x00" in s:
+            raise TextError("a string may not contain NUL")
+        offs.append(4 * len(strings) + len(body))
+        body += s + b"\x00"
+    return struct.pack(f"<{len(strings)}I", *offs) + bytes(body) + tail
+
+
+def _blocks(text: str, marker: str = "### ") -> List[Tuple[str, bytes]]:
+    """(header after the marker, encoded text) of every block of a block file."""
+    out: List[Tuple[str, List[str]]] = []
+    for line in text.split("\n"):
+        if line.startswith(marker):
+            out.append((line[len(marker):].strip(), []))
+        elif out and not line.startswith("#"):
+            out[-1][1].append(line.rstrip("\r"))
+    res = []
+    for head, b in out:
+        while len(b) > 1 and b[-1] == "":
+            b.pop()
+        try:
+            res.append((head, sbl.from_text("\\n".join(b))))
+        except UnicodeEncodeError as e:
+            bad = e.object[e.start:e.start + 1]
+            raise TextError(f"block {head}: {bad!r} (U+{ord(bad):04X}) is not in the game's character set "
+                            f"({sbl.CODEC})")
+    return res
+
+
+def _txd_export(path: str, data: bytes) -> str:
+    strings, tail = txd_parse(data)
+    if txd_build(strings, tail) != data or any(tail):
+        raise TextError("does not rebuild to the same bytes; left alone")
+    lines = [f"# {path}  {len(strings)} strings  (menu text; keep %p, %d and the game's codes)"]
+    for i, s in enumerate(strings):
+        lines += [f"### {i:04d}", sbl.to_text(s)]
+    return "\n".join(lines) + "\n"
+
+
+def _txd_rebuild(path: str, data: bytes, text: str) -> bytes:
+    strings, tail = txd_parse(data)
+    new = [b for _, b in _blocks(text)]
+    if len(new) != len(strings):
+        raise TextError(f"{len(new)} strings, the disc has {len(strings)} (do not add or remove ### blocks)")
+    return data if new == strings else txd_build(new, tail)
+
+
+def _sub_rebuild(path: str, data: bytes, text: str) -> bytes:
+    import moviesub
+    new = text_to_file(text, sbl.CODEC)
+    if new != data:
+        why = moviesub.check_edit(data, new)
+        if why:
+            raise TextError(why)
+    return new
+
+
+def _batdat_export(path: str, data: bytes) -> str:
+    import smallfiles
+    rows = smallfiles.batdat_raw_strings(data)
+    lines = [f"# {path}  {len(rows)} strings  (replaced in place: same length or shorter, never longer)"]
+    for si, o, raw in rows:
+        lines += [f"### S{si:02d} @{o:#06x} max {len(raw)} bytes", sbl.to_text(raw)]
+    return "\n".join(lines) + "\n"
+
+
+def _batdat_rebuild(path: str, data: bytes, text: str) -> bytes:
+    import smallfiles
+    known = {(si, o): raw for si, o, raw in smallfiles.batdat_raw_strings(data)}
+    new = {}
+    for head, raw in _blocks(text):
+        try:
+            sec, off = head.split()[:2]
+            key = (int(sec[1:]), int(off[1:], 16))
+        except (ValueError, IndexError):
+            raise TextError(f"bad block header '### {head}'")
+        if key not in known:
+            raise TextError(f"### {head}: not a string of this database")
+        if raw != known[key]:
+            new[key] = raw
+    try:
+        return smallfiles.batdat_replace(data, new) if new else data
+    except smallfiles.SmallFileError as e:
+        raise TextError(str(e))
+
+
+class Kind:
+    def __init__(self, name, suffix, match, export, rebuild, relocatable, why_fixed=""):
+        self.name, self.suffix, self.match = name, suffix, match
+        self.export, self.rebuild = export, rebuild
+        self.relocatable, self.why_fixed = relocatable, why_fixed
+
+
+def _is_quest(low: str) -> bool:
+    return low.replace("/", "\\").startswith("iwase\\") and low.endswith(".txt") and low.count("\\") + low.count("/") == 1
+
+
+KINDS = (
+    Kind("menu", ".txd.txt", lambda low: low.endswith(".txd"), _txd_export, _txd_rebuild, False,
+         "the game reads menu text into static buffers of fixed size"),
+    Kind("subtitle", ".sub.txt", region.is_movie_subtitle,
+         lambda path, data: file_to_text(data, sbl.CODEC), _sub_rebuild, True),
+    Kind("quest", ".sjis.txt", _is_quest,
+         lambda path, data: file_to_text(data, "shift_jis"),
+         lambda path, data, text: text_to_file(text, "shift_jis"), False,
+         "its loader has not been read"),
+    Kind("battle", ".txt", lambda low: low in ("yamamoto\\batdat.us", "yamamoto\\batdat.bin"),
+         _batdat_export, _batdat_rebuild, False, "the game loads it into a static buffer"),
+)
+
+
+def _kind_of(path: str):
+    low = path.lower()
+    for k in KINDS:
+        if k.match(low):
+            return k
+    return None
+
+
+def _kind_path(root: Path, chain: int, path: str, kind: Kind) -> Path:
+    p = root / f"chain{chain}" / Path(*path.replace("/", "\\").split("\\"))
+    if kind.name == "battle":
+        return p.with_name(p.name + ".txt")            # batdat.us.txt / batdat.bin.txt
+    return p.with_suffix(kind.suffix)
+
+
+def _kind_entries(iso: IsoImage):
+    import arx
+    for chain in available_chains(iso):
+        reader = ChainReader(iso, chain)
+        entries = parse_toc(bytes(reader.toc_bytes()), CHAINS[chain][0])
+        alloc = _allocations(entries)
+        for e in entries:
+            kind = _kind_of(e.path)
+            if kind is None:
+                continue
+            data = reader.read(e.byte_offset, e.size)
+            if e.compressed:
+                data = arx.decompress(data)
+            yield chain, e, kind, data, alloc[e.path]
+
+
+def export_kinds(iso: IsoImage, root: Path) -> Dict[str, int]:
+    """Write the menu, subtitle, quest and battle text; {kind: files written}. A file
+    that would not rebuild to its own bytes is reported and left out."""
+    done: Dict[str, int] = {}
+    for chain, e, kind, data, alloc in _kind_entries(iso):
+        try:
+            text = kind.export(e.path, data)
+            if kind.rebuild(e.path, data, text) != data:
+                raise TextError("does not rebuild to the same bytes")
+        except TextError as ex:
+            print(f"text-export: {e.path} left out: {ex}", file=sys.stderr)
+            continue
+        dest = _kind_path(root, chain, e.path, kind)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "w", encoding="utf-8", newline="") as fh:     # line ends exactly as in the game's file
+            fh.write(text)
+        done[kind.name] = done.get(kind.name, 0) + 1
+    return done
+
+
+def plan_kinds(iso: IsoImage, root: Path, changed, problems, grow: bool = False) -> None:
+    for chain, e, kind, data, alloc in _kind_entries(iso):
+        src = _kind_path(root, chain, e.path, kind)
+        if not src.exists():
+            continue
+        with open(src, encoding="utf-8-sig", newline="") as fh:
+            text = fh.read()
+        try:
+            new = kind.rebuild(e.path, data, text)
+        except TextError as ex:
+            problems.append(f"{e.path}: {ex}")
+            continue
+        if new == data:
+            continue
+        if e.compressed:
+            problems.append(f"{e.path}: stored compressed; text-import does not rewrite compressed text")
+            continue
+        if len(new) > alloc:
+            if not kind.relocatable:
+                problems.append(f"{e.path}: {len(new)} bytes, {len(new) - alloc} more than its {alloc}-byte "
+                                f"slot; this file is not relocated ({kind.why_fixed}). Shorten other text "
+                                f"in the same file")
+                continue
+            if not grow:
+                problems.append(f"{e.path}: {len(new)} bytes exceeds its {alloc}-byte slot "
+                                f"(over by {len(new) - alloc}; --grow relocates it)")
+                continue
+        changed[(chain, e.path)] = new
+
+
 def _sjis_hint(s: bytes) -> str:
     try:
         t = s.decode("shift_jis")
@@ -243,6 +547,10 @@ def export_text(iso_path: str, out_dir: str) -> int:
     fi, si = export_inline(iso, root)
     if fi:
         print(f"exported {si} inline strings from {fi} .sb scripts (Japan/demo layout) to {root}", file=sys.stderr)
+    done = export_kinds(iso, root)
+    if done:
+        print("exported " + ", ".join(f"{n} {k} file(s)" for k, n in sorted(done.items())) + f" to {root}",
+              file=sys.stderr)
     return 0
 
 
@@ -298,6 +606,7 @@ def plan_import(iso_path: str, text_dir: str,
                 continue
         changed[(chain, e.path)] = blob
     plan_inline(iso, root, changed, problems)
+    plan_kinds(iso, root, changed, problems, grow=grow)
     return changed, problems
 
 
@@ -412,6 +721,73 @@ def self_test() -> int:
             f.read_text(encoding="utf-8").replace("### 0002", "### 0002\n### 0003"), encoding="utf-8")
         ch, pr = plan_import(str(iso), str(tree))
         check(not ch and any("do not add or remove" in p for p in pr), "an added block is refused")
+
+    # the other kinds: menus (.txd), movie subtitles, quest text (Shift-JIS), the battle database
+    import struct
+    check(file_to_text(b"a\tb\r\n\x01\xa4\xa2\xff", sbl.CODEC) == "a\tb\r\n⟦01⟧あ⟦FF⟧"
+          and text_to_file("a\tb\r\n⟦01⟧あ⟦FF⟧", sbl.CODEC) == b"a\tb\r\n\x01\xa4\xa2\xff", "whole-file text is lossless (EUC-JP)")
+    sj = "Name:\"テスト\"\r\nｶﾅ\x00".encode("shift_jis") + b"\xfd"
+    check(text_to_file(file_to_text(sj, "shift_jis"), "shift_jis") == sj and "テスト" in file_to_text(sj, "shift_jis"),
+          "whole-file text is lossless (Shift-JIS)")
+    menu = [b"New Game", b"Load", b"%p", b""]
+    check(txd_parse(txd_build(menu, b"\x00\x00")) == (menu, b"\x00\x00"), ".txd build/parse round trip, tail kept")
+    subs = (b";" + b"-" * 60 + b"\n0\t$ay390;\n00:01:00\tHello there\n00:02:00\t\nend\n")
+    pool = b"Medica\x00One ally\x00Revert\x00"
+    sec0 = struct.pack("<4H", 16, 23, 7, 0) + struct.pack("<4H", 32, 23, 16, 23) + pool
+    bd = struct.pack("<III", 1, 12 + len(sec0), 12) + sec0
+    quest = "No.1\r\n{\r\n\tName:\"テスト\"\r\n}\r\n".encode("shift_jis")
+    files = {"yosikawa\\Menu.txd": txd_build(menu), "movie\\en\\s0.txt": subs,
+             "iwase\\Quest.txt": quest, "yamamoto\\batdat.us": bd, "zz\\end.bin": b"E" * 10}
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        iso = minidisc.build(td / "mini.iso", files)
+        tree = td / "text"
+        quiet(export_text, str(iso), str(tree))
+        names = sorted(p.name for p in tree.rglob("*.txt"))
+        check(names == ["Menu.txd.txt", "Quest.sjis.txt", "batdat.us.txt", "s0.sub.txt"], "one tree file per object, by kind")
+        ch, pr = plan_import(str(iso), str(tree))
+        check(not ch and not pr, "unedited menus, subtitles, quests and battle text import as no change")
+
+        def edit(rel, old_, new_):
+            f = tree / "chain0" / rel
+            with open(f, encoding="utf-8", newline="") as fh:
+                t = fh.read()
+            assert old_ in t
+            with open(f, "w", encoding="utf-8", newline="") as fh:
+                fh.write(t.replace(old_, new_, 1))
+
+        edit("yosikawa/Menu.txd.txt", "Load", "Load Game")
+        edit("movie/en/s0.sub.txt", "Hello there", "Hello, there")
+        edit("iwase/Quest.sjis.txt", "テスト", "テスト２")
+        edit("yamamoto/batdat.us.txt", "One ally", "One")
+        ch, pr = plan_import(str(iso), str(tree))
+        check(len(ch) == 4 and not pr, "one edit in each changes four objects")
+        out = td / "out.iso"
+        quiet(import_text, str(iso), str(tree), str(out))
+        check(txd_parse(minidisc.read(out, "yosikawa\\Menu.txd"))[0] == [b"New Game", b"Load Game", b"%p", b""]
+              and minidisc.read(out, "movie\\en\\s0.txt") == subs.replace(b"Hello there", b"Hello, there")
+              and minidisc.read(out, "iwase\\Quest.txt") == quest.replace("テスト".encode("shift_jis"), "テスト２".encode("shift_jis"))
+              and minidisc.read(out, "yamamoto\\batdat.us") == bd.replace(b"One ally", b"One\x00\x00\x00\x00\x00")
+              and minidisc.read(out, "zz\\end.bin") == b"E" * 10 and out.stat().st_size == iso.stat().st_size,
+              "the image holds exactly the four edits")
+        quiet(export_text, str(iso), str(tree))
+        edit("movie/en/s0.sub.txt", "Hello there", "Hello there" + "!" * 64)
+        ch, pr = plan_import(str(iso), str(tree), grow=True)
+        check(not ch and len(pr) == 1 and "64-byte boundary" in pr[0], "subtitle text past the 64-byte boundary is refused")
+        quiet(export_text, str(iso), str(tree))
+        edit("movie/en/s0.sub.txt", ";" + "-" * 60, ";" + "-" * 3000)
+        ch, pr = plan_import(str(iso), str(tree))
+        check(not ch and len(pr) == 1 and "--grow" in pr[0], "a subtitle file past its slot needs --grow")
+        ch, pr = plan_import(str(iso), str(tree), grow=True)
+        check(len(ch) == 1 and not pr, "... and with --grow a longer comment is accepted (comments are not counted)")
+        quiet(export_text, str(iso), str(tree))
+        edit("yamamoto/batdat.us.txt", "Medica", "Medica+")
+        edit("yosikawa/Menu.txd.txt", "Load", "L" * 3000)
+        edit("iwase/Quest.sjis.txt", "テスト", "漢" * 1500)
+        ch, pr = plan_import(str(iso), str(tree), grow=True)
+        check(not ch and len(pr) == 3 and sum("not relocated" in p for p in pr) == 2
+              and sum("may not get longer" in p for p in pr) == 1,
+              "a longer battle string and a menu or quest file past its slot are refused, --grow or not")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

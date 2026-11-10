@@ -346,7 +346,7 @@ def cmd_font_rebuild(args) -> int:
 
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
-              "minidisc", "textpack")
+              "minidisc", "moviesub", "textpack")
 
 
 def cmd_self_test(args) -> int:

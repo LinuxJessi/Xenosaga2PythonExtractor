@@ -109,11 +109,52 @@ bytes) and size (4 bytes), the ISO volume size (both byte orders), and two
 new sectors at the end of the image. Nothing else in the image differed, the
 other 8,604 TOC entries were unchanged, and for an ARX-compressed object the
 entry's compressed and uncompressed sizes are both rewritten (the ARX header
-carries its own). A re-export of the patched image differed in the one edited
-line only.
+carries its own): `yajima\title.bin`, relocated with a changed payload, read
+back with its new compressed size in the TOC and in its header and
+decompressed to the new payload. A re-export of the patched image differed in
+the one edited line only.
 
 Japanese discs: text is inside the scripts and is edited in place, same
 length or shorter; `--grow` does not apply to it.
+
+### The other text: menus, subtitles, quests, battle names
+
+`text-export` also writes, and `text-import` reads back:
+
+| Text | On the disc | In the tree | What an edit may do |
+|---|---|---|---|
+| menus | `yosikawa\MainMenu.txd`, `Tutorial.txd`, `Location.txd` | `X.txd.txt`, `### NNNN` blocks | strings grow and shrink; the file must stay in its slot |
+| movie subtitles | `movie\en\*.txt` (Japan `movie\*.txt`) | `X.sub.txt`, the file itself | the 64-byte rule below; `--grow` may relocate the file |
+| quest, citizen and treasure text | `iwase\*.txt` (Shift-JIS) | `X.sjis.txt`, the file itself | the file must stay in its slot |
+| battle names and descriptions | `yamamoto\batdat.us` (Japan `batdat.bin`) | `batdat.us.txt`, `### S<section> @<offset> max N bytes` blocks | each string in place: same length or shorter |
+
+An unedited export imports as "no text changed" on every disc, and each
+object rebuilt from its unedited text is the original byte for byte: 3 menu
+files, 20 + 25 subtitle files, 6 quest files and the battle database on the
+USA discs; the same counts on the Japanese discs; 2, 3, 6 and 1 on the demo.
+(For the battle database "rebuilt" means every string re-encoded and put back
+in place; there is no writer that moves its strings.)
+
+Why these limits, and how sure they are:
+
+* **Menus** are read into static buffers (`FUN_00228570`: `MainMenu.txd` to
+  0x6A5BC0 and `Tutorial.txd` to 0x6A9BC0, 16,384 bytes apart;
+  `Location.txd` through a pointer in `FUN_0023ad18`). A slot is whole
+  sectors and so is the read, so a file that stays in its slot is read
+  exactly as before. They are never relocated. Read from code, not seen in
+  game.
+* **Quest text**: the loader (`FUN_00232100`) has not been read; the same
+  "stay in the slot" rule is applied for the same reason.
+* **Battle database**: loaded to a static buffer (OV01,
+  `FUN_00a83dc0(path, 0x61d040)`) of unknown size, with 220 bytes left in its
+  last sector on the USA disc. Its strings are found through 16-bit fields of
+  records whose layout is not decoded, so a string is replaced where it is
+  and may not get longer (`smallfiles.batdat_replace`).
+* **Subtitles**: see "Subtitle limit" below, and the note under it.
+
+The files of the two whole-file kinds must come back exactly as you want
+them on the disc: line ends are kept as they are (LF in the subtitle files,
+CRLF in the quest files), and `⟦XX⟧` is a raw byte.
 
 ## Any file: `patch`
 
@@ -150,5 +191,44 @@ story movie is `movie\s010100.sfd` (the news report), its subtitles
   Comment lines are free; equal-length or shorter edits are safe. Translations
   that lengthen subtitles need the engine changed (or the decoder block
   enlarged), not just the text file.
+
+  **`text-import` enforces this rule** (`moviesub.py`): it packs the cues the
+  way `FUN_001e7a08` does and refuses an edit whose packed cues pass the next
+  64-byte boundary of the retail file's. The retail room is small: 2 bytes
+  for `s010100.txt` (packed 4,926 bytes; the "about 12" and "4,532" above
+  were estimates), 2 to 63 bytes across the 45 USA files.
+
+  **The explanation above does not match the code, and the true limit is not
+  settled (2026-11-10, code reading only).** `FUN_001e7a08` (disassembly at
+  0x1e7a08) does not return the packed size. After the terminator record it
+  steps 4 bytes and scans to the next NUL (0x1e7abc-0x1e7ad8), through the
+  not-yet-overwritten rest of the file, so its result ends at the first NUL
+  after the end of the *file*: on the retail disc that is in the filler of
+  the sector's slack, at the next multiple of 32 above the file size (6,752
+  for the 6,723-byte `s010100.txt`). The work area therefore starts at
+  `align64(6,752) = 6,784`, and it is the file's size, comments included,
+  that moves it:
+
+  | Case above | File size | Work area starts at | Result seen |
+  |---|---|---|---|
+  | retail | 6,723 | 6,784 | plays |
+  | relocated, same size | 6,723 | 6,784 | plays |
+  | grown with comments | 8,794 | 8,832 (2,048 further) | plays |
+  | one line 52 characters longer | 6,775 | 6,784 (unmoved) | broken |
+
+  So a work area moved by 2,048 bytes played, and the broken case did not
+  move it at all. The breakage has another cause, not found yet; the length
+  of a single line is the obvious suspect (each line is drawn with an
+  x-offset byte `~(width / 2)`, which wraps for a line wider than 511 pixels
+  and is a NUL, cutting the cue list short, at 510-511). Until someone tries
+  it in the game, the 64-byte rule stays: it is the stricter of the two for
+  displayed text, and it refuses the case that broke. What it does not
+  promise is that every edit it lets through is safe: a short file with 60
+  bytes of room would be allowed a much longer line than the one tried.
+
+  The packing is done in place and unchecked. `moviesub.py` also refuses
+  files the game's own parser would mangle: a first cue that is not at frame
+  0 with too little text above it, runs of very short cue lines, a time not
+  followed by a tab or blank, a list not closed by an `end` line.
 * **KOS-MOS's hair** is patched in both test discs but she is not on screen in
   the first minutes, so it is not yet checked in the game.

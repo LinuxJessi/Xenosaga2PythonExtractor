@@ -1,5 +1,15 @@
 # Updates
 
+## 2026-11-10: menus, subtitles, quest text and battle names in `text-export` / `text-import`
+
+* Four more kinds of text, each exact both ways on every disc (an unedited
+  export imports as no change; see MODDING.md for the table and the limits).
+* **`moviesub.py`** packs subtitle cues the way the game does and enforces
+  the 64-byte rule. Reading the packer also showed that the recorded
+  explanation of that rule does not match the code; the true limit is open
+  (MODDING.md, "Subtitle limit").
+* **`smallfiles.batdat_replace`**: battle strings, in place.
+
 ## 2026-11-10: text banks may grow (`text-import --grow`)
 
 * The two `.sbl` loaders were read: both load script and bank into one

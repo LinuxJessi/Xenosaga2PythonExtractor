@@ -90,6 +90,16 @@ Sections 2-5, 15 and 16 are numbers only. Record sizes differ per section
 not named yet. For a translation this file matters: the battle and menu
 names of every skill and item are here, not in the `.sbl` banks.
 
+**Writing (2026-11-10).** `smallfiles.batdat_replace` puts new strings back
+in place, same length or shorter, NUL-filled; `text-export` / `text-import`
+use it. A writer that moves strings was not built: the record shapes are
+mixed (section 6 has 109 twelve-byte records for 197 strings, the later ones
+with one string each; section 17's "pool" holds 112 byte runs of which the
+records name 3), so which u16 fields are offsets is known only from their
+values, and a number that happens to equal an offset would be rewritten with
+them. The Japanese file is `yamamoto\batdat.bin` (75,992 bytes, the same 19
+sections and 1,085 strings, EUC-JP); the demo's has 1,084.
+
 ## Map data: `model\map\*.id` (214)
 
 ```

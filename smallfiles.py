@@ -209,11 +209,10 @@ def _is_euc(raw: bytes) -> bool:
         return False
 
 
-def batdat_strings(data: bytes) -> List[Tuple[int, int, str]]:
-    """(section, offset in section, text) for every string the sections point
+def batdat_raw_strings(data: bytes) -> List[Tuple[int, int, bytes]]:
+    """(section, offset in section, bytes) for every string the sections point
     to: records whose first two u16 point into the section's string pool, and
     the plain offset list of the last section."""
-    import sbl
     out = []
     for si, (a, b) in enumerate(batdat_sections(data)):
         seg = data[a:b]
@@ -225,10 +224,49 @@ def batdat_strings(data: bytes) -> List[Tuple[int, int, str]]:
         words = struct.unpack_from(f"<{pool // 2}H", seg, 0)
         refs = {w for w in words if pool <= w < len(seg) and seg[w] != 0
                 and (w == pool or seg[w - 1] == 0)}
-        for o in sorted(refs):
-            raw = _cstr(seg, o)        # ASCII on the USA disc, EUC-JP on the Japanese one
-            out.append((si, o, raw.decode(sbl.CODEC) if _is_euc(raw) else raw.decode("latin1")))
+        out += [(si, o, _cstr(seg, o)) for o in sorted(refs)]
     return out
+
+
+def batdat_strings(data: bytes) -> List[Tuple[int, int, str]]:
+    """``batdat_raw_strings`` decoded: ASCII on the USA disc, EUC-JP on the Japanese one."""
+    import sbl
+    return [(si, o, raw.decode(sbl.CODEC) if _is_euc(raw) else raw.decode("latin1"))
+            for si, o, raw in batdat_raw_strings(data)]
+
+
+def batdat_replace(data: bytes, new: Dict[Tuple[int, int], bytes]) -> bytes:
+    """The battle database with some strings replaced IN PLACE. ``new`` maps
+    (section, offset in section) -> bytes; a string may keep its length or get
+    shorter (the rest is NUL-filled), never longer: no record, offset or size in
+    the file changes, so nothing has to be known about the number fields.
+
+    Why not a writer that moves strings: a string is found through u16 fields of
+    its section's records, and which fields are offsets is known only by their
+    values (sections mix record shapes: 109 records for 197 strings in section 6;
+    section 17's "pool" is not text). Moving a string means rewriting every field
+    that points at it and no field that merely equals it, and that cannot be told
+    apart from the file alone. The file also has little room: 220 bytes on the
+    USA disc before its last sector ends, and the game loads it into a static
+    buffer (OV01: ``FUN_00a83dc0(path, 0x61d040)``) whose size is not known."""
+    known = {(si, o): raw for si, o, raw in batdat_raw_strings(data)}
+    secs = batdat_sections(data)
+    out = bytearray(data)
+    for (si, o), text in new.items():
+        old = known.get((si, o))
+        if old is None:
+            raise SmallFileError(f"section {si} offset {o:#x}: not a string the database points to")
+        if b"\x00" in text:
+            raise SmallFileError(f"section {si} offset {o:#x}: a string may not contain NUL")
+        if len(text) > len(old):
+            raise SmallFileError(f"section {si} offset {o:#x}: {len(text)} bytes, the original has "
+                                 f"{len(old)}; strings are replaced in place and may not get longer")
+        if not text and old:
+            raise SmallFileError(f"section {si} offset {o:#x}: a string may not be emptied "
+                                 f"(the kit finds a string by its first byte and would lose it)")
+        a = secs[si][0] + o
+        out[a:a + len(old)] = text + bytes(len(old) - len(text))
+    return bytes(out)
 
 
 # -------------------------------------------------------- describe anything
@@ -387,6 +425,27 @@ def self_test() -> int:
     sec = struct.pack("<HHHH", 9, 17, 0, 0) + b"\x00Med Kit\x00Heal.\x00\x00\x00"
     db = struct.pack("<II", 1, 12 + len(sec)) + struct.pack("<I", 12) + sec
     check(batdat_strings(db) == [(0, 9, "Med Kit"), (0, 17, "Heal.")], "battle database strings")
+    # the battle database: a text section (two 8-byte records, a pool) and a numbers-only one
+    pool = b"Medica\x00One ally\x00\x00Revert\x00All\x00\x00\x00"
+    recs = struct.pack("<4H", 16, 23, 7, 0) + struct.pack("<4H", 33, 40, 16, 23)
+    sec0, sec1 = recs + pool, struct.pack("<4H", 2, 0, 500, 9)
+    head = struct.pack("<II", 2, 16 + len(sec0) + len(sec1)) + struct.pack("<II", 16, 16 + len(sec0))
+    bd = head + sec0 + sec1
+    raw = batdat_raw_strings(bd)
+    check(raw == [(0, 16, b"Medica"), (0, 23, b"One ally"), (0, 33, b"Revert"), (0, 40, b"All")],
+          "battle database: the strings the records point to")
+    check(batdat_replace(bd, {}) == bd and batdat_replace(bd, {(0, 16): b"Medica"}) == bd,
+          "batdat_replace with unchanged text is the identity")
+    nb = batdat_replace(bd, {(0, 23): b"One"})
+    check(len(nb) == len(bd) and batdat_raw_strings(nb)[1] == (0, 23, b"One")
+          and [x for i, x in enumerate(batdat_raw_strings(nb)) if i != 1] == [raw[0], raw[2], raw[3]]
+          and sum(a != b for a, b in zip(nb, bd)) == 5, "a shorter string is NUL-filled in place; nothing else moves")
+    for bad, why in (({(0, 16): b"Medica!"}, "longer"), ({(0, 17): b"x"}, "not a string"), ({(0, 16): b""}, "emptied")):
+        try:
+            batdat_replace(bd, bad)
+            check(False, f"batdat_replace refuses: {why}")
+        except SmallFileError:
+            check(True, f"batdat_replace refuses: {why}")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

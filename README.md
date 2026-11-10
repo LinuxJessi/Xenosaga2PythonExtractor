@@ -97,6 +97,14 @@ on their own. `python build.py` makes a standalone app with PyInstaller
 
 `text-export` writes one file per text bank; edit the lines, keep the
 `### NNNN` markers and the game's codes (`[Speaker]`, `\n`, `$zoom13;`).
+It also writes the menus (`yosikawa\*.txd` as `X.txd.txt`), the movie
+subtitles (`X.sub.txt`), the quest and citizen text (`iwase\*.txt`,
+Shift-JIS, as `X.sjis.txt`) and the battle database's names and descriptions
+(`batdat.us.txt`). Each kind has its own limit, and `text-import` says which
+one an edit broke: menus and quest text must stay inside their slot on the
+disc, subtitle text may grow only to the next 64-byte boundary, battle
+strings may not get longer, and `--grow` relocates a dialogue bank within the
+room its loader has ([docs/MODDING.md](docs/MODDING.md)).
 `text-import` rebuilds every changed bank, refuses the whole import if one
 no longer fits its slot on the disc, and patches a copy of the disc in place,
 reading every write back. Lines may grow or shrink inside the slot. A
