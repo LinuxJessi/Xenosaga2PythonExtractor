@@ -1,5 +1,18 @@
 # Updates
 
+## 2026-11-10: fonts
+
+* **Episode II addressing in `font.py`** (`Addressing`, `xs2_cell`), read
+  from the executables: code to cell, the extra-kanji list, how USA single
+  bytes (ASCII through a table, Latin-1 at cell = byte + 0x80) reach cells,
+  and that the metric pair is indexed by cell in both regions (384 pairs USA,
+  256 Japan with 192 used). The tables come from the disc's executable by
+  virtual address. See FORMATS.md, Fonts.
+* **Episode I's addressing is fenced** (`font.Episode1`); the old
+  module-level names raise.
+* **`font-extract` / `font-rebuild`**: sheets as PNG, metrics as CSV, and the
+  byte-to-cell table. An unedited round trip is byte-identical on every disc.
+
 ## 2026-11-10: regions
 
 * **`region.py`**: the build is read from the boot executable. USA Disc 1

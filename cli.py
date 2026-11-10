@@ -15,6 +15,8 @@ Usage:
     python cli.py text-export --iso DISC.iso --out TEXTDIR
     python cli.py dialogue --iso DISC1.iso [--iso DISC2.iso] --out DIR [--voice]
     python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso
+    python cli.py font-extract --iso DISC.iso --out FONTDIR
+    python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
     python cli.py recolor --iso DISC.iso --out PINK.iso [--preset kosmos-hair] [--hue 0.92]
     python cli.py self-test
@@ -310,7 +312,39 @@ def cmd_patch(args) -> int:
     return 0
 
 
-SELF_TESTS = ("region", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
+def cmd_font_extract(args) -> int:
+    """The region's two fonts (font0/font1 .us or .tex) as files, four PNG sheets
+    each, the metrics as CSV, and the byte -> cell -> metric table of this build."""
+    import font
+    from repack import read_entry
+
+    iso = IsoImage(args.iso)
+    prof = region.region_of(iso)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        adr = font.Addressing.from_iso(iso)
+    except font.FontError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
+    for name in prof.fonts:
+        (out / name).write_bytes(read_entry(args.iso, 0, name))
+        font.cmd_extract(str(out / name), str(out))
+        font.write_table(out / f"{Path(name).stem}_bytes.csv", adr, font.Font.load(out / name))
+    return 0
+
+
+def cmd_font_rebuild(args) -> int:
+    import font
+
+    try:
+        return font.cmd_rebuild(args.ref, args.sheets, args.out, args.metrics)
+    except font.FontError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
+
+
+SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue")
 
 
@@ -405,6 +439,18 @@ def main(argv=None) -> int:
     p.add_argument("--text", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_text_import)
+
+    p = sub.add_parser("font-extract", help="the fonts as PNG sheets + metrics CSV + the byte-to-cell table")
+    p.add_argument("--iso", required=True)
+    p.add_argument("--out", required=True, help="directory for font0/font1, sheet PNGs, metrics CSV")
+    p.set_defaults(func=cmd_font_extract)
+
+    p = sub.add_parser("font-rebuild", help="a font file from edited sheets (and metrics)")
+    p.add_argument("--ref", required=True, help="the retail font file to start from")
+    p.add_argument("--sheets", required=True, help="directory with edited sheet PNGs")
+    p.add_argument("--metrics", help="edited metrics CSV")
+    p.add_argument("--out", required=True, help="font file to write")
+    p.set_defaults(func=cmd_font_rebuild)
 
     p = sub.add_parser("patch", help="replace objects in a copy of the disc")
     p.add_argument("--iso", required=True)

@@ -46,6 +46,8 @@ python cli.py natives     --iso "Disc 1.iso" --iso "Disc 2.iso" --out natives/  
 python cli.py text-export --iso "Disc 1.iso" --out text/
 python cli.py dialogue    --iso "Disc 1.iso" --iso "Disc 2.iso" --out lines/ --voice   # every line, in play order, with voice clips
 python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
+python cli.py font-extract --iso "Disc 1.iso" --out font/         # sheets as PNG, metrics, byte-to-cell table
+python cli.py font-rebuild --ref font/font0.us --sheets font/ --out new_font0.us
 python cli.py patch       --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
 python cli.py recolor     --iso "Disc 1.iso" --out pink.iso          # KOS-MOS's hair, every copy
 python cli.py self-test

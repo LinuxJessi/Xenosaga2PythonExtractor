@@ -48,14 +48,16 @@ class Region:
     carddata: str
     exe: Optional[str] = None           # the game executable when it is not the boot ELF
     kanji_list_va: Optional[int] = None  # the font's extra-kanji list (font.py); None = not located
+    ascii_table_va: Optional[int] = None  # the font's ASCII -> EUC table: u16 at VA + 2 * byte
 
 
 US = Region("us", "en", "sbl", ("font0.us", "font1.us"), "yamamoto\\batdat.us", "carddata.bin",
-            kanji_list_va=0x63E870)
+            kanji_list_va=0x63E870, ascii_table_va=0x63E770)     # FUN_00197988, FUN_00198b90
 JP = Region("jp", None, "inline", ("font0.tex", "font1.tex"), "yamamoto\\batdat.bin", "carddata.new",
-            kanji_list_va=0x63A2A0)
+            kanji_list_va=0x63A2A0, ascii_table_va=0x63A1A0)     # code at 0x197828, 0x198a58
 DEMO = Region("demo", None, "inline", ("font0.tex", "font1.tex"), "yamamoto\\batdat.bin", "carddata.new",
-              exe="EXP\\EXP.ELF")
+              exe="EXP\\EXP.ELF",
+              kanji_list_va=0x639060, ascii_table_va=0x638F60)   # code at 0x197978, 0x198bb8
 
 PROFILES = {
     "SLUS_208.92": US,          # Disc 1

@@ -128,11 +128,52 @@ at 0x3eae40, and the palette each sprite uses must be read from that code.
 Some `.txy` map textures look odd over a grey background but are right:
 `mil13_grass_col` is one flat colour with the grass drawn entirely in alpha.
 
-## Fonts: `font0.us`, `font1.us`
+## Fonts: `font0.us`, `font1.us` (Japan and the demo: `font0.tex`, `font1.tex`)
 
-Episode I's `font0.tex` layout (two PSMCT32 uploads read as PSMT4, four
-sheets of 1,024 20x24 cells) with 384 proportional metric pairs instead of
-256. `font.py` round-trips both files exactly.
+**The file** has Episode I's container: two 0x20-byte headers, each followed
+by a 0x3C000-byte PSMCT32 upload that the engine reads as a 640x768 PSMT4
+texture (two 4-level sheets per block, so four sheets of 1,024 20x24 cells),
+then (left, right) metric byte pairs from 0x78040: 384 on the USA discs
+(492,352 bytes), 256 on the Japanese discs and the demo (492,096 bytes; the
+demo's two files are byte-identical to Japan's). `font.py` round-trips all of
+them; `font-extract` then `font-rebuild` of the unedited sheets and metrics
+gives back the same bytes (checked on USA Disc 1 and 2, Japan Disc 1 and 2
+and the demo).
+
+**The addressing is not Episode I's.** (An earlier version of this page and
+of `font.py` said "the same layout"; that was true of the container only.)
+Read from the executables, 2026-11-10; USA addresses, Japan in brackets:
+
+| Step | Rule | Where |
+|---|---|---|
+| two-byte code to cell | per-row rules for A1-A8 and AD; kanji B0-CF at `lead*94 + trail - 0x3D41` (B0A1 = 1024, A4A2 = 193); D0 and up through a list of extra kanji (cell 3989 + index) | `FUN_001979e0`, `FUN_00197988` [0x197880, 0x197828] |
+| the extra-kanji list | USA 0x63E870, empty; Japan 0x63A2A0, 87 codes; demo 0x639060, the same 87 | data |
+| ASCII, with `$han1;` | a u16 code per byte from a table (USA 0x63E770 + 2 * byte), then the row rules; `A` = A3C1 = cell 138 | `FUN_00198b90` [0x198a58] |
+| ASCII, without `$han` | an 8x8 system font, not a cell of this file | `FUN_00197bb8` 0x198768 |
+| USA bytes 0x80-0xFF | one Latin-1 character each, cell = byte + 0x80 (`É` 0xC9 = cell 329), except the two-byte codes `FUN_00194dd0` lets through (lead A4, A6, AD; a few of A1 and A2). The USA build does not print kanji this way | `FUN_00197bb8` 0x1986c0 |
+| Japan bytes 0xA0-0xFF | always the lead of a two-byte code; lead A9 has no rule (fallback cell 0x7F) | [0x198508] |
+| metric pair | index = the cell number | `FUN_00198b38` [0x1989a8] |
+| proportional (`$prop1;`) | USA cells below 384, Japan below 192: image from sheet 0, cell + 576; advance `right - left + 3` (USA) or `+ 4` (Japan). A pair with left 0 takes the text's `$xx1` width | 0x198840, 0x198b68 [0x1986b0, 0x1989d8] |
+| everything else | the cell itself, advance 19 | |
+
+Japan's pairs 192-255 are never read by this code. The ink of cell + 576
+equals its pair in 379 of 384 USA pairs and 255 of 256 Japanese ones (the
+others are blank cells). All 1,951 two-byte codes of the Japanese text
+(322,672 uses in scripts, the battle database and the menus) reach an inked
+cell with no fallback, the space aside.
+
+**USA: sheets 2 and 3 look unreachable.** The Japanese draw function picks
+the texture block by bit 1 of `cell >> 10` (0x197204) and the Japanese setup
+uploads two blocks (0x198bc0, 0x198c1c). The USA draw function
+(`FUN_00197200`, 0x197380-0x1973fc) uses one texture address and bit 0 only,
+and the USA setup (`FUN_00198bc0`) uploads one block. From the code, a USA
+cell from 2048 up is drawn from where cell - 2048 is. Not seen in the
+running game.
+
+`font-extract` also writes `fontN_bytes.csv`: for every byte 0x20-0xFF, the
+code, cell, drawn cell, metric slot, pair and advance, for this disc's build.
+`font.py` does not measure whole strings (the control bytes and `$`-codes
+are not modelled).
 
 ## Dialogue: `.sbl` (465)
 
