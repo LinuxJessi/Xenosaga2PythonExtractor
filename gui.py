@@ -155,6 +155,13 @@ COMMAND_HELP = {
     "text-import": "Rebuild the banks you edited and patch them into a <em>copy</em> of the "
                    "disc. The whole import is refused if one bank no longer fits its slot; "
                    "every write is read back.",
+    "exe-export": "Write the strings the game's code points at (the boot executable, OV01.OVL and "
+                  "OV02.OVL: <em>Saving...</em>, the memory-card prompts, <em>Total Exp</em>) to an editable "
+                  "tree, one <code>### @ADDRESS max N bytes</code> block per string.",
+    "exe-import": "Write the edited strings back <em>in place</em> into a copy of the disc: each at most its "
+                  "<code>max N</code> bytes, the rest of its slot filled with zeros. Run it <em>last</em>: "
+                  "afterwards the executable is not the retail one and text-import, font-extract and lang-scan "
+                  "refuse the image. For another round, give the retail disc as <em>Retail disc</em>.",
     "patch": "Replace whole objects in a copy of the disc. One replacement per line: "
              "<code>chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl</code>.",
     "lang-scan": "Translating into an alphabet the game never had (Arabic, Hindi, Georgian, ...): shape the "
@@ -176,6 +183,7 @@ FIELD_HINTS = {
     "iso": {"label": "Disc image", "pick": "file", "filter": "iso"},
     "out": {"label": "Output", "pick": "dir"},
     "text": {"label": "Text folder", "pick": "dir"},
+    "retail": {"label": "Retail disc", "pick": "file", "filter": "iso"},
     "dump": {"label": "Dump folder", "pick": "dir"},
     "path": {"label": "In-game path", "placeholder": "e.g. cf\\sc1010.sb"},
     "set": {"label": "Replacements", "placeholder": "chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl"},
@@ -221,7 +229,7 @@ def command_schema(parser: Optional[argparse.ArgumentParser] = None) -> List[dic
     by_signature: Dict[tuple, dict] = {}
     for name, p in sub.choices.items():
         short = _help_of(sub, name)
-        writes_iso = bool(_WRITES_ISO.search(short)) or name in ("patch", "text-import")
+        writes_iso = bool(_WRITES_ISO.search(short)) or name in ("patch", "text-import", "exe-import")
         fields = []
         for a in p._actions:
             if isinstance(a, argparse._HelpAction):

@@ -42,6 +42,7 @@ The Episode I kit's rules, kept (the first one with three packages added):
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
                             ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py
+                            ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
                             └─ patch / recolor ─► repack.py, recolor.py
 ```
 
@@ -66,13 +67,14 @@ The Episode I kit's rules, kept (the first one with three packages added):
 | `textcodec.py` | text bytes <-> editable text per build, and the check on typed characters |
 | `glyphs.py` | new glyphs into the USA fonts: the code tiers, allocation, rasterising with fontTools/uharfbuzz (from the Episode I kit, addressing rewritten; [ALPHABETS.md](ALPHABETS.md)) |
 | `langpack.py` | shaping, bidi order, wrapping and encoding of a translated tree in a new alphabet (from the Episode I kit) |
+| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree; written back in place (from the Episode I kit's `ovltext.py`) |
 | `vsf.py` | KORG sample banks to WAV |
 | `prj.py` | KORG projects: keys, programs, SoundFont 2 ([MUSIC.md](MUSIC.md)) |
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |
 | `songfx.py` | the songs' effect settings, and renders that follow them |
 | `spu2synth.py` | the songs as the PS2 plays them: KORG's driver rules on a model of the SPU2 and its reverb (numpy; [MUSIC.md](MUSIC.md)) |
 | `smallfiles.py` | packs, title logos, the save icon, the battle database, map/actor tables |
-| `repack.py` | writes objects back into a disc copy (same size, or grown and moved) |
+| `repack.py` | writes objects back into a disc copy (same size, or grown and moved); plain ISO files in place (`fs_replacements`) |
 | `recolor.py` | hue-shifts named textures in every copy on a disc |
 | `gui.py` | the local web GUI |
 | `toolfind.py` | finds ffmpeg: the copy bundled under `tools/` first, then PATH |
