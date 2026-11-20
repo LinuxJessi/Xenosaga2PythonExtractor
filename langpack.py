@@ -87,6 +87,7 @@ from glyphs import (FIXED, PAIR, PREFER, SINGLE, TIERS, Glyph, GlyphError, Glyph
 
 MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<",
           "\u00ab": "\u00bb", "\u00bb": "\u00ab"}         # « » are Bidi_Mirrored too (Arabic quotation marks)
+_EXE_AT = re.compile(r"### @0x([0-9A-Fa-f]+) max ")    # an exe-export block header
 DEFAULT_SPACE_PX = 9            # $xx1,8 + 1 in the subtitle and cfe states; assumed for the window
 ICON_PX = 19                    # &NN: an assumption (a fixed-width cell)
 SUBTITLE_WIDTH = 440
@@ -379,6 +380,10 @@ class Encoder:
         self.missing: Counter = Counter()
         self.unknown: Counter = Counter()
         self.typed: Dict[int, Tuple[int, str, str]] = {}    # cell -> (uses, character, where) of typed Latin-1
+        # tree file name -> {address: retail bytes} of the executables' strings (retail_exe_strings),
+        # so an untouched executable string is not taken for typed text; None: not known
+        self.retail_exe: Optional[Dict[str, Dict[int, bytes]]] = None
+        self.exe_unchecked = 0
         self.provisional: Dict[str, int] = {}
         self.warnings: List[str] = []
         self.errors: List[str] = []
@@ -810,8 +815,25 @@ class Encoder:
         so its cell must not be given to a new glyph. The disc's own Japanese and the
         ⟦XX⟧ escapes are left out. A body the encoder leaves alone is left out too when
         the retail reserve would skip it (glyphs.visible_retail): text-export shows the
-        EUC-JP developer lines as Latin-1 (e.g. 'Í½È÷£±'), and the player never sees them."""
-        if not target:
+        EUC-JP developer lines as Latin-1 (e.g. 'Í½È÷£±'), and the player never sees them.
+        An executable string (``.exe.txt``) without the new script is left out when it
+        still holds its retail bytes: exe-export lists data and developer strings whose
+        bytes read as Latin-1 (EUC-JP fullwidth letters, pointers, a JPEG marker), the
+        retail reserve does not cover the executables either, and exe-import writes
+        only the strings that changed. Without the retail strings (lang-encode with no
+        --iso) such bodies are not checked, and the encoder says so."""
+        if not target and self.kind == "exe":
+            m = _EXE_AT.search(self.where)
+            if self.retail_exe is None or not m:
+                self.exe_unchecked += 1
+                return
+            rel = self.where.split(" ### ", 1)[0].rsplit("/", 1)[-1]
+            try:
+                if self.retail_exe.get(rel, {}).get(int(m.group(1), 16)) == _US.from_text(body):
+                    return
+            except textcodec.TextError:
+                pass
+        elif not target:
             try:
                 if not visible_retail(_US.from_text(body)):
                     return
@@ -1089,6 +1111,26 @@ def load_langpack(glyphset_path) -> dict:
     return d
 
 
+def retail_exe_strings(iso_path) -> Dict[str, Dict[int, bytes]]:
+    """{tree file name (BOOT.exe.txt, OV01.OVL.exe.txt, ...): {address: bytes}} of every
+    string exe-export lists for this disc's executables (exetext.ExeSet)."""
+    import exetext
+    from iso9660 import IsoImage
+    iso = IsoImage(str(iso_path))
+    try:
+        prof = exetext._us_only(iso, "the executable strings")
+        files = [(n, bytes(iso.read_file(n)), role) for n, role in exetext.disc_executables(iso)]
+    finally:
+        iso.close()
+    es = exetext.ExeSet(files, prof)
+    return {exetext.tree_name(n, es.exes[n].role): {va: s.raw for va, s in es.strings[n].items()}
+            for n in es.exes}
+
+
+def _has_exe_tree(roots) -> bool:
+    return any(next(Path(r).rglob("*.exe.txt"), None) is not None for r in roots)
+
+
 def _encoder_from(glyphset_path, a, collect=False) -> Encoder:
     gs = GlyphSet.load(glyphset_path)
     lp = load_langpack(glyphset_path)
@@ -1193,6 +1235,8 @@ def cmd_scan(a) -> int:
     enc = Encoder(configs, gs, adr, f0.metrics, rtl=rtl, widths=parse_widths(0, []), collect=True, only=only,
                   space_px=a.space_px)
     roots = [Path(t) for t in a.text]
+    if _has_exe_tree(roots):
+        enc.retail_exe = retail_exe_strings(a.iso)
     firsts: set = set()
     res = run_tree(roots, enc, firsts)
     if res.errors:
@@ -1356,8 +1400,15 @@ def cmd_encode(a) -> int:
     if dst.resolve() == src.resolve() or src.resolve() in dst.resolve().parents:
         raise LangError(f"--out {dst} is inside the source tree; give another folder")
     enc = _encoder_from(a.glyphset, a)
+    exe_tree = _has_exe_tree([src])
+    if exe_tree and a.iso:
+        enc.retail_exe = retail_exe_strings(a.iso)
     res = run_tree([src], enc)
     errors = list(res.errors) + list(enc.errors) + enc.typed_conflicts()
+    if enc.exe_unchecked:
+        print(f"note: {enc.exe_unchecked} executable string(s) without the new script were not checked for "
+              f"typed Latin-1 characters (give --iso, the disc the tree was exported from, to check the ones "
+              f"that differ from retail)", file=sys.stderr)
     if enc.missing:
         errors.append(f"{sum(enc.missing.values())} glyph use(s) have no slot ({len(enc.missing)} distinct, e.g. "
                       f"{list(enc.missing)[:4]}); run lang-scan again on this tree")
@@ -1379,6 +1430,18 @@ def cmd_encode(a) -> int:
     print(f"encoded {res.changed} changed file(s) of {len(res.files)} -> {dst}")
     for kind, (w, where) in sorted(enc.widest.items()):
         print(f"  widest {kind} line: {w} px  {where}")
+    if a.iso and exe_tree:
+        import exetext
+        import region
+        try:
+            changes, problems = exetext.plan(a.iso, str(dst))
+        except region.UnknownBuild as e:
+            print(f"dry run refused: {e}", file=sys.stderr)
+            return 1
+        for p in problems:
+            print(f"dry run: {p}", file=sys.stderr)
+        print(f"dry run on {a.iso}: {len(changes)} executable(s) would change, {len(problems)} problem(s)")
+        return 1 if problems else 0
     if a.iso:
         import region
         import textpack
@@ -1511,7 +1574,8 @@ def add_encode_args(p) -> None:
     _layout_args(p)
     p.add_argument("--width-kind", action="append", default=[], metavar="KIND=PX",
                    help="wrap width per kind: bank, menu, subtitle, battle, exe (repeatable)")
-    p.add_argument("--iso", help="a disc copy with the new fonts patched in: dry-run text-import on the result")
+    p.add_argument("--iso", help="a disc copy with the new fonts patched in: dry-run text-import on the result "
+                   "(exe-import for an executable tree, whose untouched strings are then told from typed text)")
 
 
 def add_preview_args(p) -> None:
@@ -1636,6 +1700,16 @@ def self_test() -> int:
           f"typed Latin-1 characters are recorded by cell, untouched bodies included, Japanese and EUC-JP "
           f"developer lines shown as Latin-1 left out "
           f"({sorted(et.typed)})")
+    ex = enc()
+    hdr = "BOOT.exe.txt ### @0x0068b678 max 15 bytes"
+    ex.string("\u00a3\u00c4\u00a3\u00ef", "exe", hdr)            # retail EUC-JP fullwidth letters, untouched
+    check(not ex.typed and ex.exe_unchecked == 1,
+          "without the retail strings an executable body with no new script is not checked, and counted")
+    ex.retail_exe = {"BOOT.exe.txt": {0x68B678: b"\xa3\xc4\xa3\xef"}}
+    ex.string("\u00a3\u00c4\u00a3\u00ef", "exe", hdr)
+    check(not ex.typed, "an executable string that still holds its retail bytes is not typed text")
+    ex.string("Caf\u00e9", "exe", hdr)
+    check(set(ex.typed) == {0xE9 + 0x80}, "an executable string that differs from retail is checked for typed Latin-1")
     g2 = GlyphSet("t2")
     g2.bind(adr)
     for ch in heb[:2]:
