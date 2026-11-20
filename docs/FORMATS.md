@@ -170,6 +170,17 @@ and the USA setup (`FUN_00198bc0`) uploads one block. From the code, a USA
 cell from 2048 up is drawn from where cell - 2048 is. Not seen in the
 running game.
 
+**Which face draws what** (read from the USA code, 2026-11-20). The engine
+has one font buffer (0x8DD280). `FUN_00198ff0` loads `font1.us` at init, so
+font1 draws field dialogue, menus and battle text. `font0.us` is loaded in
+its place while a movie plays (`FUN_001e7d08`) and between cfe.init
+(`FUN_0024c308`) and cfe.destroy (`FUN_0024e738`), the real-time cutscenes.
+Measured: sheet 0 (cells 0-1023, every cell the USA build can draw except
+the kanji sheet) and all 384 metric pairs are byte-identical in the two USA
+files. (The Episode I kit's "font0 is the dialogue face" was carried into
+`font.py` and is wrong here.) New glyphs therefore go into both files
+([ALPHABETS.md](ALPHABETS.md)).
+
 `font-extract` also writes `fontN_bytes.csv`: for every byte 0x20-0xFF, the
 code, cell, drawn cell, metric slot, pair and advance, for this disc's build.
 `font.py` does not measure whole strings (the control bytes and `$`-codes
