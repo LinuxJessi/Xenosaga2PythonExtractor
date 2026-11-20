@@ -1,9 +1,9 @@
 @echo off
 REM Xenosaga II Extractor — Windows double-click launcher.
 REM Starts the local GUI on a free port and opens your browser.
-REM The kit needs numpy (requirements.txt). If your Python lacks it, the first
-REM run makes a private environment in .venv\ beside this file and installs
-REM numpy there; later runs use that environment.
+REM The kit needs numpy, fontTools and uharfbuzz (requirements.txt). If your
+REM Python lacks any of them, the first run makes a private environment in .venv\
+REM beside this file and installs them there; later runs use that environment.
 
 setlocal
 cd /d "%~dp0"
@@ -15,10 +15,10 @@ set "PY=%BASE%"
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 if not defined PY goto nopython
 
-%PY% -c "import numpy" >nul 2>nul
+%PY% -c "import numpy, fontTools, uharfbuzz" >nul 2>nul
 if not errorlevel 1 goto run
 if not defined BASE goto noinstall
-echo Setting up numpy, which the music renderer needs, in .venv\ ...
+echo Setting up numpy, fontTools and uharfbuzz (music and new alphabets) in .venv\ ...
 %BASE% -m venv .venv
 if errorlevel 1 goto noinstall
 ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt
@@ -40,7 +40,7 @@ pause
 exit /b 1
 
 :noinstall
-echo Could not install numpy automatically. Install it yourself with
+echo Could not install the requirements automatically. Install them yourself with
 echo     py -3 -m pip install -r requirements.txt
 echo then double-click this launcher again.
 pause
