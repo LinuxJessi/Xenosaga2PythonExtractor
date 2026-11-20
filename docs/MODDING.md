@@ -338,13 +338,19 @@ retail disc as `--retail`: the executables are taken from it, every edited
 string of the tree is applied to them, and the result replaces the ones on
 the image. That equals an import into a fresh retail copy (checked byte for
 byte on Disc 1). Without `--retail` such an image is refused, because its
-files are not the ones the tree was exported from. Only the USA build is
-supported; Japan and the demo are refused.
+files are not the ones the tree was exported from. The tree may hold only
+the files it changes (the manifest plus, say, `BOOT.exe.txt`): a file it
+leaves out keeps the image's bytes, and with `--retail` it is reset to the
+retail bytes too, so an overlay patched in an earlier round does not stay
+behind and the twin check still compares against retail text (both cases
+are in the self-test). Only the USA build is supported; Japan and the demo
+are refused.
 
-Not seen in the running game yet: no edited executable string has been
-looked at in PCSX2. The `Saving...` path (its print state sets `$han1` and
-`$prop1`, so it is drawn from the proportional font like dialogue) is read
-from code.
+Seen in the running game: the edited `Saving...` string (boot executable
+0x68B678, in Amharic) on the LANGTEST disc in PCSX2, 2026-11-20
+([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)). That its
+print state sets `$han1` and `$prop1`, so it is drawn from the proportional
+font like dialogue, is read from code.
 
 ## Any file: `patch`
 

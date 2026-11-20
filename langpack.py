@@ -339,10 +339,11 @@ def make_shaper(cfg: dict):
 # --- the encoder -------------------------------------------------------------------
 
 class Item:
-    __slots__ = ("kind", "text", "keys", "dir", "width", "pre", "state", "level")
+    __slots__ = ("kind", "text", "keys", "dir", "width", "pre", "state", "level", "verbatim")
 
-    def __init__(self, kind, text="", keys=(), d="N", width=0, pre="", state=None):
+    def __init__(self, kind, text="", keys=(), d="N", width=0, pre="", state=None, verbatim=False):
         self.kind, self.text, self.keys, self.dir, self.width = kind, text, list(keys), d, width
+        self.verbatim = verbatim            # a control token (<○>, &NN): placed like a neutral, never mirrored
         self.pre = pre                      # control text in front of it (state codes too, as written)
         self.state = dict(state or {})      # state codes in effect when it is drawn
         self.level = 0
@@ -525,7 +526,8 @@ class Encoder:
             m = (_BUTTON.match(text, i) if text[i] == "<" else None)
             if m:
                 flush_word(i)
-                it = Item("lit", m.group(0), d="N", width=self.lit_width(m.group(0)[1]), pre=pre, state=state)
+                it = Item("lit", m.group(0), d="N", width=self.lit_width(m.group(0)[1]), pre=pre, state=state,
+                          verbatim=True)
                 pre = ""
                 items.append(it)
                 i = m.end()
@@ -533,7 +535,7 @@ class Encoder:
             m = (_ICON.match(text, i) if text[i] == "&" else None)
             if m:
                 flush_word(i)
-                it = Item("lit", m.group(0), d="N", width=ICON_PX, pre=pre, state=state)
+                it = Item("lit", m.group(0), d="N", width=ICON_PX, pre=pre, state=state, verbatim=True)
                 pre = ""
                 items.append(it)
                 i = m.end()
@@ -668,7 +670,7 @@ class Encoder:
     def _render(self, it: Item, rtl: bool) -> List[Tuple[str, str]]:
         if it.kind in ("space", "lit"):
             s = it.text
-            if rtl and it.kind == "lit" and it.level == 1:     # neutral ASCII inside RTL
+            if rtl and it.kind == "lit" and it.level == 1 and not it.verbatim:   # neutral ASCII inside RTL
                 s = "".join(MIRROR.get(c, c) for c in s)
                 if it.dir == "N" and not _ESC.search(s):
                     s = s[::-1]
@@ -1152,6 +1154,14 @@ def cmd_scan(a) -> int:
         raise LangError(f"{len(new)} key(s) have no cell in {a.cells}: {new[:8]}")
     for k in new:
         gs.add(shaper.glyph(k))
+    # a glyph is drawn whole or not at all: ink outside the 20x24 cell would be lost on the disc
+    # (a wide one is drawn narrower by glyphs.TTFRenderer.raster instead; ink above or below stays cut)
+    cut = [k for k in new if getattr(gs.glyphs[k], "cut", 0)]
+    if cut:
+        raise LangError(f"{len(cut)} glyph(s) do not fit the 20x24 cell and would be cut off: "
+                        + ", ".join(f"{k} ({gs.glyphs[k].cut} px outside)" for k in cut[:8])
+                        + ". Try a smaller --px or another --baseline")
+    narrowed = [k for k in new if getattr(gs.glyphs[k], "narrowed", 1.0) < 1.0]
     for k in order:
         g = gs.glyphs[k]
         enc.provisional[k] = fontmod.FIXED_ADVANCE if g.ink_width > 18 else (g.ink_width + 2 if g.bounds else
@@ -1237,10 +1247,13 @@ def cmd_scan(a) -> int:
     print(f"  script {cfg['script'] or '(any)'}: {len(order)} glyphs ("
           + ", ".join(f"{by_tier[t]} {t}" for t in TIERS) + f"), {len(limited)} in size-limited text, "
           f"{len(firsts)} first in a battle section")
-    clipped = [k for k in order if gs.glyphs[k].clipped]
+    for k in narrowed:
+        print(f"note: {k} is wider than the cell at this --px; drawn at {gs.glyphs[k].narrowed:.0%} of its width "
+              f"so none of it is cut off ({gs.slots[k]['tier']} code {gs.slots[k]['bytes']})")
+    clipped = [k for k in new if gs.glyphs[k].clipped]
     if clipped:
-        print(f"warning: {len(clipped)} glyph(s) touch the edge of the 20x24 cell and may be cut off; look at "
-              f"sheet0_preview.png and try a smaller --px")
+        print(f"warning: {len(clipped)} glyph(s) touch the edge of the 20x24 cell (nothing of them is cut off, "
+              f"but they may touch their neighbours); look at sheet0_preview.png")
     nd = getattr(shaper, "notdef", set())
     if nd:
         print(f"warning: {len(nd)} word(s) use characters this font lacks (drawn as its .notdef): {sorted(nd)[:6]}")
@@ -1531,6 +1544,11 @@ def self_test() -> int:
     pb = ep.string("\u05d4 <\u25cb>")
     check(pb == " " * ((60 - 7 - 5 - ep.lit_width("\u25cb")) // 5) + "<\u25cb> " + H,
           "a '<○>' button tag is one unit as wide as its symbol (the window draws no brackets)")
+    for kind in ("bank", "subtitle"):
+        ic = e.string("א &12 ב", kind)
+        check(ic == B + " &12 " + A and not e.errors,
+              f"an &NN icon token inside an RTL line is placed as a neutral but written verbatim ({kind}: {ic!r})")
+    check(e.string("א <△> ב") == B + " <△> " + A, "a '<△>' tag is written verbatim, not mirrored")
     check(enc(widths={"subtitle": 60}, align="right").string("\u05d4\u05d5", "subtitle") == V + H,
           "subtitles are never padded")
     check(e.string("Plain English, $zoom13;untouched.") == "Plain English, $zoom13;untouched."
