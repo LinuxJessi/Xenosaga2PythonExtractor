@@ -115,6 +115,9 @@ of the slot with NUL; the file size never changes. The disc's file must be
 the one the tree was exported from (manifest sha256). ``--retail`` takes the
 base bytes from a retail disc instead and applies every edited string of the
 tree to them, so an image that is already exe-patched can be done again.
+A tree may hold only the files it changes: a file it leaves out keeps the
+disc's bytes, or with ``--retail`` is reset to the retail bytes, so the
+result always equals an import of the tree into a fresh retail copy.
 After an import the boot ELF is no longer the retail one, so every command
 that reads its tables (text-import, font-extract, lang-scan) refuses the
 image: exe-import is the last step.
@@ -863,6 +866,18 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
         checker = _TypedCheck(iso, es)
         for name, exe in es.exes.items():
             tname, dname = disc_names[name]
+            if not (root / tname).exists():
+                # a tree may hold only the files it changes (as text-import's does); the others are
+                # still read above, because the three executables share addresses. A left-out file
+                # gets its base bytes: the disc's own (nothing changes), or with --retail the retail
+                # ones, so a file patched by an earlier round is reset and the result still equals
+                # an import into a fresh retail copy (and the twin check below compares retail text)
+                new_bytes[name] = bytearray(exe.data)
+                if retail is not None and exe.data != current[name]:
+                    log.append(f"{tname}: not in the tree, {dname} reset to the retail bytes (--retail)")
+                else:
+                    log.append(f"{tname}: not in the tree, {dname} left as it is")
+                continue
             try:
                 with open(root / tname, encoding="utf-8-sig", newline="") as fh:
                     text = fh.read()
@@ -943,8 +958,10 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
                         a = encoded.get((name, va), s.raw)
                         b = encoded.get((other, ova), es.strings[other][ova].raw)
                         if a != b:
+                            absent = [disc_names[n][0] for n in (name, other) if not (root / disc_names[n][0]).exists()]
                             problems.append(f"@0x{va:08x}: {disc_names[name][0]} and {disc_names[other][0]} hold the "
-                                            f"same string and now differ; give both blocks the same text")
+                                            f"same string and now differ; give both blocks the same text"
+                                            + (f" (put {', '.join(absent)} from the export into the tree)" if absent else ""))
         if problems:
             return {}, problems, log
         out = {}
@@ -1038,7 +1055,8 @@ def import_(iso_path, tree, out_iso, retail_iso=None, verbose: bool = True) -> i
     except (RepackError, region.UnknownBuild) as e:
         print(f"refused: {e}; nothing was written", file=sys.stderr)
         return 1
-    print(f"patched {len(log)} string(s) in {len(changes)} executable(s) into {out_iso}", file=sys.stderr)
+    n = sum(1 for line in log if " -> " in line)
+    print(f"patched {n} string(s) in {len(changes)} executable(s) into {out_iso}", file=sys.stderr)
     print(ORDER_WARNING.format(out=out_iso), file=sys.stderr)
     return 0
 
@@ -1347,6 +1365,23 @@ def self_test() -> int:
         ot.write_text(otext.replace("\nPlease wait.\n", "\nOne moment\n"), encoding="utf-8")
         ch, pr = plan(src, tree)
         check(pr == [] and set(ch) == {"OV01.OVL", "SLUS_208.92"}, "an overlay edit is planned beside the boot ELF's")
+        ot.write_text(otext, encoding="utf-8")
+        # a tree that holds only the file it changes (manifest + BOOT.exe.txt)
+        ot.unlink()
+        ch, pr = plan(src, tree)
+        check(pr == [] and set(ch) == {"SLUS_208.92"}, "a file left out of the tree leaves its executable as it is")
+        # ... but with --retail a left-out file is reset: round 1 edits the overlay, round 2's tree
+        # leaves it out, and the result must still equal an import into a fresh retail copy
+        ot.write_text(otext.replace("\nPlease wait.\n", "\nOne moment\n"), encoding="utf-8")
+        r1, r2, r3 = td / "R1.iso", td / "R2.iso", td / "R3.iso"
+        rc1, _ = q(import_, src, tree, r1)
+        ot.unlink()
+        rc2, err2 = q(import_, r1, tree, r2, src)
+        rc3, _ = q(import_, src, tree, r3)
+        check(rc1 == 0 and b"One moment" in r1.read_bytes(), "round 1 puts the overlay edit on the image")
+        check(rc2 == 0 and rc3 == 0 and r2.read_bytes() == r3.read_bytes() and b"One moment" not in r2.read_bytes()
+              and "reset to the retail bytes" in err2,
+              "--retail with a file left out resets it to retail (equals a fresh import, and says so)")
         ot.write_text(otext, encoding="utf-8")
         # Japan is refused
         jp = minidisc.build(td / "jp.iso", fonts, boot="SLPS_253.68", elf=boot)

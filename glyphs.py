@@ -297,6 +297,8 @@ class Glyph:
         self.bitmap = bitmap
         self.bounds = ink_bounds(bitmap)
         self.advance_hint = advance_hint    # for blank glyphs (spaces), from the shaper
+        self.narrowed = 1.0                 # < 1: drawn narrower than the font so it fits the cell
+        self.cut = 0                        # ink pixels (of the unclipped drawing) outside the cell
 
     @property
     def ink_width(self) -> int:
@@ -677,24 +679,40 @@ class TTFRenderer:
         """Draw glyphs (gid, x_px, y_px offsets from the pen) into one cell.
         Even-odd scanline fill at ``supersample`` x resolution, then averaged
         to the four levels the font supports. With no ``x_origin`` the leftmost
-        ink is put at column 1 (the ink is moved to its metric columns later)."""
+        ink is put at column 1 (the ink is moved to its metric columns later),
+        and ink wider than the 19 columns from there to the cell's edge (a wide
+        ligature such as SF Arabic's sheen+yeh final, 25 px at 18 px/em) is
+        drawn narrower, so nothing is cut off; ``last_fit`` is that factor.
+        ``last_cut`` counts the ink pixels that still fall outside the cell
+        (above or below it, or sideways with an ``x_origin``)."""
+        sx = 1.0
+        xmin = 0.0
         if x_origin is None:
             xs = [dx + x * self.scale for gid, dx, dy in placements for c in self.contours(gid) for x, _ in c]
-            x_origin = 1.0 - min(xs) if xs else 1.0
+            xmin = min(xs) if xs else 0.0
+            extent = (max(xs) - xmin) if xs else 0.0
+            room = CELL_W - 1.0 - 0.05          # columns 1..19, the edge itself left free
+            if extent > room:
+                sx = room / extent
+            x_origin = 1.0
+        self.last_fit = sx
         ss = self.ss
         W, H = CELL_W * ss, CELL_H * ss
-        cov = [[0] * W for _ in range(H)]
+        # a canvas with room around the cell, to count what falls outside it
+        mx, my = W, H // 2
+        BW, BH = W + 2 * mx, H + 2 * my
+        cov = [[0] * BW for _ in range(BH)]
         edges = []
         for gid, dx, dy in placements:
             for contour in self.contours(gid):
-                pts = [((x_origin + dx + x * self.scale) * ss,
-                        (self.baseline - dy - y * self.scale) * ss) for x, y in contour]
+                pts = [((x_origin + sx * (dx + x * self.scale - xmin)) * ss + mx,
+                        (self.baseline - dy - y * self.scale) * ss + my) for x, y in contour]
                 for i in range(len(pts)):
                     x0, y0 = pts[i]
                     x1, y1 = pts[(i + 1) % len(pts)]
                     if y0 != y1:
                         edges.append((x0, y0, x1, y1))
-        for sy in range(H):
+        for sy in range(BH):
             yc = sy + 0.5
             xs = []
             for x0, y0, x1, y1 in edges:
@@ -703,23 +721,39 @@ class TTFRenderer:
             xs.sort()
             for i in range(0, len(xs) - 1, 2):
                 a, b = int(math.floor(xs[i] + 0.5)), int(math.floor(xs[i + 1] + 0.5))
-                for sx in range(max(a, 0), min(b, W)):
-                    cov[sy][sx] = 1
+                for px in range(max(a, 0), min(b, BW)):
+                    cov[sy][px] = 1
         bm = blank()
         n = ss * ss
-        for y in range(CELL_H):
-            for x in range(CELL_W):
-                s = sum(cov[y * ss + j][x * ss + i] for j in range(ss) for i in range(ss))
-                bm[y][x] = min(3, (s * 4 + n // 2) // n) if s else 0
+        cut = 0
+        for y in range(BH // ss):
+            rows = cov[y * ss:(y + 1) * ss]
+            if not any(any(r) for r in rows):
+                continue
+            col = [sum(r[i] for r in rows) for i in range(BW)]
+            for x in range(BW // ss):
+                s = sum(col[x * ss:(x + 1) * ss])
+                level = min(3, (s * 4 + n // 2) // n) if s else 0
+                cx, cy = x - mx // ss, y - my // ss
+                if 0 <= cx < CELL_W and 0 <= cy < CELL_H:
+                    bm[cy][cx] = level
+                elif level:
+                    cut += 1
+        self.last_cut = cut
         return bm
+
+    def _glyph(self, key: str, bm: Bitmap, advance: Optional[int]) -> Glyph:
+        g = Glyph(key, bm, advance)
+        g.narrowed, g.cut = self.last_fit, self.last_cut
+        return g
 
     def render_gid(self, gid: int) -> Glyph:
         bm = self.raster([(gid, 0.0, 0.0)])
-        return Glyph(f"g:{self.name}:{gid}", bm, round(self.advance_px(gid)))
+        return self._glyph(f"g:{self.name}:{gid}", bm, round(self.advance_px(gid)))
 
     def render_cluster(self, parts: Sequence[Tuple[int, float, float]], key: str,
                        advance: Optional[int] = None) -> Glyph:
-        return Glyph(key, self.raster(parts), advance)
+        return self._glyph(key, self.raster(parts), advance)
 
     def render_text(self, text: str, key: str, direction: str = "ltr",
                     script: Optional[str] = None) -> Glyph:
@@ -729,7 +763,7 @@ class TTFRenderer:
         for gid, _, adv, xo, yo in self.shape(text, direction, script):
             parts.append((gid, (pen + xo) * self.scale, yo * self.scale))
             pen += adv
-        return Glyph(key, self.raster(parts), round(pen * self.scale))
+        return self._glyph(key, self.raster(parts), round(pen * self.scale))
 
 
 # --- sheet preview ------------------------------------------------------------------
@@ -805,8 +839,9 @@ def changed_cells(a: Font, b: Font) -> Set[int]:
 
 
 def build_test_ttf(path) -> Dict[str, str]:
-    """A TrueType font built in code: a square, a triangle and a wide bar mapped to
-    three Hebrew letters, plus a space. -> {letter: glyph name}."""
+    """A TrueType font built in code: a square, a triangle, a wide bar (21.6 px at
+    18 px/em, wider than a cell) and a tall bar (36 px, taller than a cell) mapped
+    to four Hebrew letters, plus a space. -> {letter: glyph name}."""
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.ttGlyphPen import TTGlyphPen
 
@@ -822,11 +857,12 @@ def build_test_ttf(path) -> Dict[str, str]:
     shapes = {".notdef": [(50, 0), (50, 700), (450, 700), (450, 0)], "space": [],
               "sq": [(100, 0), (100, 600), (600, 600), (600, 0)],
               "tri": [(100, 0), (350, 700), (600, 0)],
-              "wide": [(50, 0), (50, 300), (1250, 300), (1250, 0)]}
-    adv = {".notdef": 500, "space": 400, "sq": 700, "tri": 700, "wide": 1300}
+              "wide": [(50, 0), (50, 300), (1250, 300), (1250, 0)],
+              "tall": [(100, -600), (100, 1400), (300, 1400), (300, -600)]}
+    adv = {".notdef": 500, "space": 400, "sq": 700, "tri": 700, "wide": 1300, "tall": 400}
     fb = FontBuilder(upem, isTTF=True)
     fb.setupGlyphOrder(list(shapes))
-    fb.setupCharacterMap({0x20: "space", 0x05D0: "sq", 0x05D1: "tri", 0x05D2: "wide"})
+    fb.setupCharacterMap({0x20: "space", 0x05D0: "sq", 0x05D1: "tri", 0x05D2: "wide", 0x05D3: "tall"})
     fb.setupGlyf({n: poly(p) for n, p in shapes.items()})
     fb.setupHorizontalMetrics({n: (adv[n], 50) for n in shapes})
     fb.setupHorizontalHeader(ascent=800, descent=-200)
@@ -834,7 +870,7 @@ def build_test_ttf(path) -> Dict[str, str]:
     fb.setupOS2()
     fb.setupPost()
     fb.save(str(path))
-    return {"א": "sq", "ב": "tri", "ג": "wide"}
+    return {"א": "sq", "ב": "tri", "ג": "wide", "ד": "tall"}
 
 
 def self_test() -> int:
@@ -939,6 +975,16 @@ def self_test() -> int:
         gl = {r.gid_name(g): r.render_gid(g) for g in gids}
         check(gl["sq"].ink_width in (9, 10) and gl["sq"].bounds[0] == 1 and gl["wide"].ink_width > 18,
               f"rasterised: square {gl['sq'].ink_width} px from column 1, bar {gl['wide'].ink_width} px")
+        wb = gl["wide"]
+        check(wb.narrowed < 1.0 and wb.cut == 0 and wb.bounds[0] == 1 and wb.bounds[1] <= CELL_W - 1
+              and gl["sq"].narrowed == 1.0 and gl["sq"].cut == 0,
+              f"a glyph wider than the cell (21.6 px) is drawn at {wb.narrowed:.0%} of its width into columns "
+              f"{wb.bounds[0]}..{wb.bounds[1]}, nothing cut; the square is drawn as it is")
+        cut_wide = r.raster([(gids[0], 0.0, 0.0)], x_origin=1.0)
+        check(r.last_cut > 0 and ink_bounds(cut_wide)[1] == CELL_W - 1,
+              f"with a fixed origin the same bar would lose {r.last_cut} px past the cell's edge (counted)")
+        tall = r.render_gid(r.shape("ד")[0][0])
+        check(tall.cut > 0 and tall.clipped, f"a glyph taller than the cell is counted as cut ({tall.cut} px outside)")
         rows = [y for y in range(CELL_H) if any(gl["sq"].bitmap[y])]
         check(rows[-1] == 18, f"baseline 19: ink ends on row 18 like retail capitals (rows {rows[0]}-{rows[-1]})")
         tg = GlyphSet(r.name)
