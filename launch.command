@@ -24,7 +24,7 @@ if ! "$PY" -c "import numpy, fontTools, uharfbuzz" >/dev/null 2>&1; then
     echo "Setting up numpy, fontTools and uharfbuzz (music and new alphabets) in .venv/ ..."
     if ! { [ -x .venv/bin/python ] || "${BASE:-$PY}" -m venv .venv; } \
             || ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
-        echo "Could not install the requirements automatically. Install it yourself with"
+        echo "Could not install the requirements automatically. Install them yourself with"
         echo "    ${BASE:-python3} -m pip install -r requirements.txt"
         echo "then double-click this launcher again."
         read -p "Press Enter to close..."
