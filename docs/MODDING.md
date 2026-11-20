@@ -305,13 +305,47 @@ slot is 15 bytes of text. The zero bytes after a string are taken to be
 padding; a variable that the code reached only through an address below it
 would not be seen.
 
+Two things can make `max` smaller than the padding, and both are named in a
+comment above the line. An address formed after a branch from a `lui` on
+another path ends the slot when it lands in the padding (on Disc 1,
+`cdrom0:\` at 0x0063F720 stops at 15 bytes because `FUN_001a5ff8` copies 80
+bytes from 0x0063F730, and `pfs1:/Your Saves` stops at 23 because 0x00645190
+is passed to a function). And when the code copies a string with a size it
+knows (an inlined `strcpy`: word and byte loads at fixed offsets up to the
+terminator), `max` is that size less the terminator, so the copy keeps it:
+`(Player)`, `sc0000.sb` and OV01's `$han1;$prop1;$zoom15,10;...` cannot grow
+past their retail length.
+
+**Bytes the code writes.** The scan also follows a register that holds a
+string's whole address (`lui` then `addiu`) and sees stores at a fixed offset
+from it. Some strings are templates the game fills in before it draws them:
+`Path No. 01 achievement level. ...` (0x003EC9A8) gets the path number in
+its bytes +9 and +10 (`FUN_0022e9e0`, read from code), `sc0000.sb` a scene
+number in +2..+5. Their blocks say "the code writes byte +9 ...", and an edit
+must keep the same bytes at those offsets (counting from +0), or the game
+writes the digits over the middle of the new text. Eight strings of the boot
+ELF are marked; none in the overlays.
+
+**Conversions.** Many of the strings are formats for a printf-style function
+that the code calls with a fixed set of arguments (`$han1;%s` at 0x0068D570
+goes to `FUN_002aa5d8` with one argument). An extra `%s` or a `%n` would make
+it use a garbage pointer. Import compares the `%`-conversions of an edit with
+the exported string by the kind of argument each reads and refuses any
+change: you may reword around them and change flags or widths, `%d` may
+become `%x` (both read a number), but nothing may be added, dropped or
+reordered; `%%` is a percent sign and reads nothing. Which strings really go
+to a formatter has not been traced, so every string is held to this, and the
+blocks with conversions list them in a comment. The game's `$` codes are not
+compared (as in `text-import`); keep them.
+
 **In place only.** `exe-import` writes each changed string over its own
 bytes and fills the rest of the slot with zeros. Nothing moves, no file
 changes size, and nothing but the edited strings changes: on Disc 1, two
 same-length edits changed 16 bytes of the 4.68 GB image, all inside
 `SLUS_208.92`, and its directory record stayed as it was. A string longer
 than its slot, a NUL, a changed header or a moved, missing or extra block
-is refused, naming the address and the slot, and then nothing is written.
+is refused, naming the address and the slot, and so are changed conversions
+and moved stamped bytes; then nothing is written.
 Typed characters are checked against the fonts of the disc being patched, as
 in `text-import`; escapes are not checked.
 

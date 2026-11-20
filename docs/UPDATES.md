@@ -16,6 +16,12 @@
   edited alike.
 * `repack.patch_copy` takes `fs_replacements` (plain ISO files, same size).
   Not yet seen in the running game. [MODDING.md](MODDING.md).
+* After review: an address formed from another path's `lui` now ends the slot
+  of the string before it (`cdrom0:\` 41 to 15, `pfs1:/Your Saves` 35 to
+  23); stores through a register holding a string's address are named, and an
+  edit must keep those bytes (`Path No. 01 ...` gets its number in +9..+10);
+  an inlined copy of known size caps `max` at the retail length; `%`
+  conversions must stay as exported (an added `%s` or `%n` is refused).
 
 ## 2026-11-10 (later): fixes from the translation review
 
