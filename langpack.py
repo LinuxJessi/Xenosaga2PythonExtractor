@@ -99,6 +99,11 @@ _STATE = re.compile(r"\$(col|zoom|shadow|bg|alpha|xx[0-9])")
 _BREAK = re.compile(r"\\n|\n|⟦0[Aa]⟧")
 _FMT = re.compile(r"%[A-Za-z]")
 _ICON = re.compile(r"&[0-9]{2}")
+# '<○>' (also <△> <□> <×>): the field window draws the button picture and neither bracket.
+# Seen in PCSX2 on the LANGTEST disc (2026-11-20): an RTL line holding '<○>' came out one
+# '<' + '>' narrower than its padded neighbour, and the retail sc1010 #0006 line measures
+# as drawn only without the brackets. So the tag is one unit as wide as its symbol.
+_BUTTON = re.compile(r"<[○△□×]>")
 _ESC = re.compile(r"⟦[0-9A-Fa-f]{2}⟧")
 _MAX = re.compile(r"\bmax (\d+) bytes\b")
 
@@ -515,6 +520,14 @@ class Encoder:
             if m:
                 flush_word(i)
                 pre += m.group(0)
+                i = m.end()
+                continue
+            m = (_BUTTON.match(text, i) if text[i] == "<" else None)
+            if m:
+                flush_word(i)
+                it = Item("lit", m.group(0), d="N", width=self.lit_width(m.group(0)[1]), pre=pre, state=state)
+                pre = ""
+                items.append(it)
                 i = m.end()
                 continue
             m = (_ICON.match(text, i) if text[i] == "&" else None)
@@ -1515,6 +1528,9 @@ def self_test() -> int:
     ep = enc(widths={"bank": 60}, align="right", space_px=5)
     pr = ep.string("\u05d4\u05d5")
     check(pr == " " * ((60 - 15) // 5) + V + H, "right padding counts --space-px spaces")
+    pb = ep.string("\u05d4 <\u25cb>")
+    check(pb == " " * ((60 - 7 - 5 - ep.lit_width("\u25cb")) // 5) + "<\u25cb> " + H,
+          "a '<○>' button tag is one unit as wide as its symbol (the window draws no brackets)")
     check(enc(widths={"subtitle": 60}, align="right").string("\u05d4\u05d5", "subtitle") == V + H,
           "subtitles are never padded")
     check(e.string("Plain English, $zoom13;untouched.") == "Plain English, $zoom13;untouched."
