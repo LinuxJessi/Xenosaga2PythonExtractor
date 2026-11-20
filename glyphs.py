@@ -197,6 +197,23 @@ class Tiers:
         return out
 
 
+def visible_retail(s: bytes) -> bool:
+    """False for the strings the retail reserve leaves out as developer lines the
+    player never sees: those ``textpack._sjis_hint`` flags (Shift-JIS) and those that
+    decode as EUC-JP with kana or kanji other than the five retail symbols A4A1-A4A5."""
+    from textpack import _sjis_hint
+    if _sjis_hint(s):
+        return False
+    cleaned = s
+    for t in range(0xA1, 0xA6):
+        cleaned = cleaned.replace(bytes((0xA4, t)), b"")
+    try:
+        text = cleaned.decode("euc_jis_2004")
+    except UnicodeDecodeError:
+        return True
+    return not any(0x3040 <= ord(c) <= 0x30FF or 0x3400 <= ord(c) <= 0x9FFF for c in text)
+
+
 def retail_reserve(iso_path: str, adr: "fontmod.Addressing", candidates: Set[int]
                    ) -> Dict[int, Tuple[int, str]]:
     """cell -> (uses, an example) for every candidate cell that the visible retail
@@ -207,17 +224,7 @@ def retail_reserve(iso_path: str, adr: "fontmod.Addressing", candidates: Set[int
     import sbl
     import smallfiles
     from iso9660 import IsoImage
-    from textpack import _objects, _sjis_hint, txd_parse
-
-    def japanese(s: bytes) -> bool:
-        cleaned = s
-        for t in range(0xA1, 0xA6):
-            cleaned = cleaned.replace(bytes((0xA4, t)), b"")
-        try:
-            text = cleaned.decode("euc_jis_2004")
-        except UnicodeDecodeError:
-            return False
-        return any(0x3040 <= ord(c) <= 0x30FF or 0x3400 <= ord(c) <= 0x9FFF for c in text)
+    from textpack import _objects, txd_parse
 
     out: Dict[int, Tuple[int, str]] = {}
     iso = IsoImage(iso_path)
@@ -237,7 +244,7 @@ def retail_reserve(iso_path: str, adr: "fontmod.Addressing", candidates: Set[int
             except Exception:                          # an object the kit cannot read is not text
                 continue
             for s in strs:
-                if _sjis_hint(s) or japanese(s):
+                if not visible_retail(s):
                     continue
                 i = 0
                 while i < len(s):

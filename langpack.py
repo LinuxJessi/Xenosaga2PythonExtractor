@@ -83,9 +83,10 @@ import font as fontmod                                                    # noqa
 import textcodec                                                          # noqa: E402
 from font import Font, FontError                                          # noqa: E402
 from glyphs import (FIXED, PAIR, PREFER, SINGLE, TIERS, Glyph, GlyphError, GlyphSet,   # noqa: E402
-                    Tiers, battle_first_ok, from_png)
+                    Tiers, battle_first_ok, from_png, visible_retail)
 
-MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<"}
+MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<",
+          "\u00ab": "\u00bb", "\u00bb": "\u00ab"}         # « » are Bidi_Mirrored too (Arabic quotation marks)
 DEFAULT_SPACE_PX = 9            # $xx1,8 + 1 in the subtitle and cfe states; assumed for the window
 ICON_PX = 19                    # &NN: an assumption (a fixed-width cell)
 SUBTITLE_WIDTH = 440
@@ -371,6 +372,7 @@ class Encoder:
         self.script_uses: Counter = Counter()
         self.missing: Counter = Counter()
         self.unknown: Counter = Counter()
+        self.typed: Dict[int, Tuple[int, str, str]] = {}    # cell -> (uses, character, where) of typed Latin-1
         self.provisional: Dict[str, int] = {}
         self.warnings: List[str] = []
         self.errors: List[str] = []
@@ -483,6 +485,11 @@ class Encoder:
             it.pre, it.state = pre, dict(state)
             pre = ""
             items.append(it)
+        # UBA W5: a currency or percent sign (ET) next to a number takes the number's direction
+        for i, it in enumerate(items):
+            if it.kind == "lit" and it.text and all(unicodedata.bidirectional(c) == "ET" for c in it.text):
+                if any(0 <= j < len(items) and items[j].dir == "E" for j in (i - 1, i + 1)):
+                    it.dir = "E"
         return items
 
     def items(self, text: str, state: dict) -> Tuple[List[Item], dict]:
@@ -520,7 +527,8 @@ class Encoder:
             m = (_ICON.match(text, i) if text[i] == "&" else None)
             if m:
                 flush_word(i)
-                it = Item("lit", m.group(0), d="N", width=ICON_PX, pre=pre, state=state)
+                # its own kind: an icon code is never reversed or mirrored in a right-to-left line
+                it = Item("icon", m.group(0), d="N", width=ICON_PX, pre=pre, state=state)
                 pre = ""
                 items.append(it)
                 i = m.end()
@@ -641,7 +649,7 @@ class Encoder:
                         atoms.append(("t", v))
                         cur[k] = v
                 for k in cur:
-                    if k not in it.state and it.kind in ("lit", "keys"):
+                    if k not in it.state and it.kind in ("lit", "keys", "icon"):
                         self.warnings.append(f"{self.where}: the {k} code cannot be undone for the words before "
                                              f"it (their state before the code is not known); it carries onto them")
             if idx != 0:
@@ -653,6 +661,8 @@ class Encoder:
         return [a for a in atoms if a[0] == "k" or a[1]]
 
     def _render(self, it: Item, rtl: bool) -> List[Tuple[str, str]]:
+        if it.kind == "icon":                                  # &NN: as written, whatever the direction
+            return [("t", it.text)]
         if it.kind in ("space", "lit"):
             s = it.text
             if rtl and it.kind == "lit" and it.level == 1:     # neutral ASCII inside RTL
@@ -738,7 +748,9 @@ class Encoder:
         self.kind, self.where = kind, where
         self._first = None
         self._emitted_any = False
-        if not self.targets(body):
+        target = self.targets(body)
+        self._note_typed(body, target)
+        if not target:
             return body
         width = self.widths.get(kind, 0)
         rtl_ok = self.rtl is not False
@@ -776,6 +788,48 @@ class Encoder:
         if res.startswith("#"):
             res = "⟦23⟧" + res[1:]
         return res
+
+    def _note_typed(self, body: str, target: bool) -> None:
+        """Record the cell of every non-ASCII character the tree types that the USA
+        build draws as it is (Latin-1 such as « » £ é): it is written as its own byte,
+        so its cell must not be given to a new glyph. The disc's own Japanese and the
+        ⟦XX⟧ escapes are left out. A body the encoder leaves alone is left out too when
+        the retail reserve would skip it (glyphs.visible_retail): text-export shows the
+        EUC-JP developer lines as Latin-1 (e.g. 'Í½È÷£±'), and the player never sees them."""
+        if not target:
+            try:
+                if not visible_retail(_US.from_text(body)):
+                    return
+            except textcodec.TextError:
+                pass
+        for ch in _ESC.sub("", body):
+            if ord(ch) < 0x80 or _is_native(ch):
+                continue
+            if self.char_class(ch) != "n":
+                continue
+            for c in {ch, MIRROR.get(ch, ch)}:            # a mirrored « is written as »
+                try:
+                    data = _US.encode_char(c)
+                    cell = self.adr.glyph(data + b"\x00", 0, han=True).cell
+                except (textcodec.TextError, FontError):
+                    continue
+                if cell is None:
+                    continue
+                n, c0, w0 = self.typed.get(cell, (0, c, self.where))
+                self.typed[cell] = (n + 1, c0, w0)
+
+    def typed_conflicts(self) -> List[str]:
+        """Typed characters whose cell holds a glyph of the glyphset: the game would draw
+        the new glyph in their place."""
+        by_cell = {s["cell"]: k for k, s in self.gs.slots.items()}
+        out = []
+        for cell, (n, ch, where) in sorted(self.typed.items()):
+            if cell in by_cell:
+                out.append(f"{ch!r} (U+{ord(ch):04X}, typed {n} time(s), e.g. {where}) is written as byte(s) "
+                           f"{_US.encode_char(ch).hex().upper()}, whose cell {cell} now holds the glyph "
+                           f"{by_cell[cell]}; run lang-scan again on this tree (it reserves typed characters) "
+                           f"or replace the character")
+        return out
 
     def first_key(self) -> Optional[str]:
         """After ``string`` in collect mode: the glyph key drawn first, if the encoded
@@ -1171,6 +1225,19 @@ def cmd_scan(a) -> int:
         if why:
             print(f"warning: --reclaim {b:02X} frees cell {cell}; retail strings that use it will draw the new "
                   f"glyph instead: {why}")
+    # the cells of non-ASCII characters the tree types as they are (« » £ é ...): their own byte
+    # draws them, so a new glyph in that cell would replace them. --reclaim does not free these.
+    slot_cells = {s["cell"]: k for k, s in gs.slots.items()}
+    clash = []
+    for cell, (n, ch, where) in sorted(enc.typed.items()):
+        if cell in slot_cells:
+            clash.append(f"{ch!r} (U+{ord(ch):04X}, e.g. {where}) and the glyph {slot_cells[cell]} share cell {cell}")
+        elif cell in candidates:
+            reserve.setdefault(cell, f"typed in the tree: {ch!r} U+{ord(ch):04X} ({n} uses, e.g. {where})")
+    if clash:
+        raise LangError("characters the tree types sit in cells the --extend glyphset already gave to glyphs: "
+                        + "; ".join(clash[:6]) + ". Scan the scripts again from the retail fonts with these "
+                        "characters in the tree, or replace them")
     tiers = Tiers(adr, reserve)
     tiers.rank = _placeholder_rank(tiers, f0)
     print("reserved beyond the base cells:")
@@ -1264,7 +1331,7 @@ def cmd_encode(a) -> int:
         raise LangError(f"--out {dst} is inside the source tree; give another folder")
     enc = _encoder_from(a.glyphset, a)
     res = run_tree([src], enc)
-    errors = list(res.errors) + list(enc.errors)
+    errors = list(res.errors) + list(enc.errors) + enc.typed_conflicts()
     if enc.missing:
         errors.append(f"{sum(enc.missing.values())} glyph use(s) have no slot ({len(enc.missing)} distinct, e.g. "
                       f"{list(enc.missing)[:4]}); run lang-scan again on this tree")
@@ -1356,7 +1423,7 @@ def cmd_preview(a) -> int:
         enc.widths[a.kind] = 0
     face = Font.load(Path(a.glyphset).with_name(f"{a.face}.us"))
     encoded = enc.string(a.line, a.kind, "preview")
-    errors = list(enc.errors)
+    errors = list(enc.errors) + enc.typed_conflicts()
     if enc.missing:
         errors.append(f"no slot for {list(enc.missing)[:4]}: run lang-scan on text that has these words")
     if enc.unknown:
@@ -1521,6 +1588,30 @@ def self_test() -> int:
           and e.string("") == "", "a body without the target script comes back unchanged")
     check(enc(rtl=False).string("\u05d0 \u05d1") == A + " " + B, "--ltr keeps logical order")
     check(e.string("KOS-MOS \u05d0") == A + " KOS-MOS", "a Latin name at the start of an RTL line moves to the right")
+    check(e.string("\u05d0 &03 \u05d1") == B + " &03 " + A and e.string("Press &01 \u05d0") == A + " &01 Press",
+          "a controller icon &NN inside a right-to-left line is written as it is (never reversed)")
+    check(e.string("\u05d0 \u00ab\u05d1\u00bb") == "\u00ab" + B + "\u00bb " + A,
+          "the Arabic quotation marks \u00ab \u00bb are mirrored like brackets")
+    check(e.string("\u05d0 \u00a35.") == ".\u00a35 " + A, "a currency sign travels with its number (UBA W5)")
+    et = enc()
+    et.string("\u05d0 \u00ab\u05d1\u00bb \u00e9 \u00a3", "bank", "w")
+    et.string("Plain caf\u00e9 line, no target script", "bank", "w2")
+    et.string("\u65e5\u672c", "bank", "w3")
+    et.string("\u00cd\u00bd\u00c8\u00f7", "battle", "w4")      # bytes CD BD C8 F7 = EUC-JP 予備, a developer line
+    check(set(et.typed) == {0xAB + 0x80, 0xBB + 0x80, 0xE9 + 0x80, 0xA3 + 0x80},
+          f"typed Latin-1 characters are recorded by cell, untouched bodies included, Japanese and EUC-JP "
+          f"developer lines shown as Latin-1 left out "
+          f"({sorted(et.typed)})")
+    g2 = GlyphSet("t2")
+    g2.bind(adr)
+    for ch in heb[:2]:
+        g2.add(Glyph(f"u:{ch}", box(2, 4)))
+    g2.slots["u:" + heb[0]] = {"tier": SINGLE, "cell": 0xAB + 0x80, "bytes": "AB", "left": 2, "right": 4}
+    g2.slots["u:" + heb[1]] = {"tier": SINGLE, "cell": 0xC0 + 0x80, "bytes": "C0", "left": 2, "right": 4}
+    e2 = Encoder(cfg, g2, adr, f.metrics, shapers=[SimpleShaper()])
+    e2.string("\u05d0 \u00ab\u05d1\u00bb")
+    tc = e2.typed_conflicts()
+    check(len(tc) == 1 and "cell 299" in tc[0], "a typed \u00ab whose cell holds a new glyph is a conflict")
     # trees
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "src"
@@ -1611,6 +1702,20 @@ def self_test() -> int:
         check(rc == 0 and (Path(td) / "enc/xs2-text-export.json").read_bytes() == b"{\"format\": 2}\n"
               and "[Canaan]?" + B + A in (Path(td) / "enc/chain0/cf/en/sc0001.sbl.txt").read_text(encoding="utf-8"),
               "lang-encode writes the encoded tree with the manifest copied")
+        g2dir = Path(td) / "g2"
+        g2dir.mkdir()
+        g2.save(g2dir / "glyphset.json")
+        (g2dir / "font0.us").write_bytes(f.to_bytes())
+        (g2dir / LANGPACK).write_text(json.dumps({"format": 1, "configs": cfg}), encoding="utf-8")
+        t2 = Path(td) / "t2"
+        shutil.copytree(tr, t2)
+        (t2 / "chain0/cf/en/sc0001.sbl.txt").write_text(files["chain0/cf/en/sc0001.sbl.txt"].replace(
+            "What is this?", "\u05d0 \u00ab\u05d1\u00bb"), encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = main(["encode", "--text", str(t2), "--glyphset", str(g2dir / "glyphset.json"),
+                       "--out", str(Path(td) / "enc2"), "--width-kind", "bank=300"])
+        check(rc == 1 and not (Path(td) / "enc2").exists() and "U+00AB" in err.getvalue(),
+              "lang-encode refuses a typed character whose byte now draws a new glyph, and writes nothing")
         with contextlib.redirect_stdout(io.StringIO()):
             rc = main(["preview", "--glyphset", str(gdir / "glyphset.json"), "--text", "\u05d0\u05d1 Ab",
                        "--out", str(Path(td) / "p.png"), "--face", "font0"])
