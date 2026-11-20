@@ -181,7 +181,7 @@ FIELD_HINTS = {
     "xtx": {"label": "UI sheets folder", "pick": "dir"},
     "models": {"label": "Models folder", "pick": "dir"},
     "preview": {"label": "Preview folder", "pick": "dir"},
-    "report": {"label": "Report", "pick": "save", "filter": "csv"},
+    "report": {"label": "Report", "pick": "save", "filter": "csv", "suggest": "textures.csv"},
     "chain": {"label": "Chain", "choices": [["", "All chains"], ["0", "Chain 0 (shared data)"],
                                             ["1", "Chain 1 (Disc 1 movies and voices)"],
                                             ["2", "Chain 2 (Disc 2 movies and voices)"]]},
@@ -259,6 +259,8 @@ def command_schema(parser: Optional[argparse.ArgumentParser] = None) -> List[dic
                 f["pick"] = pick
                 if hint.get("filter"):
                     f["filter"] = hint["filter"]
+                if hint.get("suggest") and not f.get("suggest"):
+                    f["suggest"] = hint["suggest"]
             elif kind in ("value", "multi") and not f.get("select") and not f["choices"] and \
                     re.search(r"\b(file|png|wav|sf2|json|csv|folder|dir)\b", f["help"], re.I):
                 f["pick"] = "any"
@@ -833,7 +835,9 @@ document.addEventListener('keydown', (e) => { if (!fsModal.hidden && e.key === '
 function defaultFor(f, d) {
   if (f.default !== null && f.default !== undefined) return String(f.default);
   if (f.dest === 'iso') return f.kind === 'multi' ? (d.discs || []).join('\n') : ((d.discs || [])[0] || '');
-  if (f.pick === 'save') return d.default_out ? d.default_out + '/' + (f.suggest || 'modded.iso') : '';
+  // only the output disc gets a ready-made path; another file to save (a report) stays empty
+  // so the command's own default applies and it can never equal the disc being written
+  if (f.pick === 'save' && f.dest === 'out') return d.default_out ? d.default_out + '/' + (f.suggest || 'modded.iso') : '';
   if (f.dest === 'out') return d.default_out || '';
   if (f.dest === 'text') return d.default_out ? d.default_out + '/text' : '';
   return '';
@@ -891,7 +895,8 @@ function makeCard(step, c, d) {
     openPicker({
       mode: mode === 'save' ? 'dir' : mode, filter: btn.dataset.pickFilter || null,
       startPath: current || undefined,
-      title: mode === 'save' ? 'Choose the folder for the new disc image' : undefined,
+      title: mode === 'save' ? (btn.dataset.suggest && !/\.iso$/i.test(btn.dataset.suggest)
+        ? 'Choose the folder for ' + btn.dataset.suggest : 'Choose the folder for the new disc image') : undefined,
       onChoose: (p) => {
         if (mode === 'save') p = p.replace(/[\/\\]$/, '') + '/' + (btn.dataset.suggest || 'modded.iso');
         if (multi) el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + p; else el.value = p;
@@ -1130,6 +1135,10 @@ def self_test() -> int:
     check(ti is not None and ti_out.get("pick") == "save" and ti_out.get("label") == "Output disc"
           and ti_tree.get("pick") == "dir" and "copy of the disc" in ti["short"],
           "texture-import: --out is the output disc (its help says 'copy of the disc'), --tree a folder")
+    ti_rep = next(f for f in ti["fields"] if f["dest"] == "report") if ti else {}
+    check(ti_rep.get("pick") == "save" and ti_rep.get("suggest") == "textures.csv"
+          and "f.pick === 'save' && f.dest === 'out'" in INDEX_HTML,
+          "texture-import --report: its picker suggests textures.csv and the field starts empty (never the disc path)")
     # a command cli.py does not have yet: generic fields still work
     fake = argparse.ArgumentParser()
     fs = fake.add_subparsers(dest="cmd")

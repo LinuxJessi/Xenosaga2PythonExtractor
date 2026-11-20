@@ -23,8 +23,10 @@ What it reads (paths as ``browse.py`` / ``embedded.py`` write them):
   are refused when edited and ignored when not.
 * ``models/<area>/<path>.glb`` (or .gltf): the images of a model exported by
   ``browse``/``model``, mapped back to the entries of the .txy of the same
-  path, by image name or, for files exported before images were named after
-  their PNG files, by the order ``pxy.to_glb`` writes them in.
+  path, by image name (the PNG-file stem, or for files exported before images
+  were named that way an entry name unique among the model's entries). Image
+  order is never used (Blender reorders images); an unmatched image, or two
+  images on one entry, is a problem.
 
 The sweep. The same picture is often stored many times on the disc, under
 different names (KOS-MOS's hair is ``kosmos00_hair_col`` in kosmos00.txy and
@@ -39,10 +41,12 @@ name`` keeps copies to the same entry name, ``--sweep none`` edits only what
 the PNGs say.
 
 Everything is written through ``repack.patch_copy`` (a complete, read-back
-copy or nothing), then every replaced object is read from the new image and
-decoded again: edited, swept, ride-along and joint-changed entries must show
-their planned pictures, every other entry its original one, and untouched
-blocks inside a replaced file must be byte-identical.
+copy or nothing). Before the copy takes the ``--out`` name (its ``check``
+hook), every replaced object is read from it and decoded again: edited,
+swept, ride-along and joint-changed entries must show their planned
+pictures, every other entry its original one, and untouched blocks inside a
+replaced file must be byte-identical. A failure deletes the copy. The report
+CSV is written after that, and never over ``--out`` or ``--iso``.
 
     python teximport.py --iso DISC.iso --tree EDITED --out MODDED.iso [--dry-run]
     python teximport.py --iso DISC.iso --verify-roundtrip
@@ -654,34 +658,47 @@ def read_gltf_images(file: Path) -> List[Tuple[Optional[str], bytes, str]]:
     return out
 
 
+_DUP_SUFFIX = re.compile(r"^(.+)\.\d{3}$")
+
+
 def map_glb_images(names: List[Optional[str]], t: dict, decoded: Dict[int, tuple], used: Optional[set]):
     """Image k -> entry index, by (1) the PNG-file stem the export names images
-    after, (2) an entry name unique among the used entries, (3) pxy.to_glb's
-    order (image k = k-th of sorted(used and decoded)), accepted only when the
-    counts match. Returns ({k: entry}, [unmapped k])."""
+    after, (2) an entry name unique among the entries the model uses (files
+    exported before images carried the stem). A ``.NNN`` tail (Blender's suffix
+    for a repeated image name) is tried without it when the full name does not
+    match. Image order is never used: Blender writes images in its own order.
+    Returns ({k: entry}, [unmapped k], {entry: [k, ...]} for entries two or
+    more images claim); unmapped and claimed-twice images are problems."""
     multi = len(t["banks"]) > 1
     by_stem = {Path(txy.entry_filename(e, multi)).stem: e["i"] for e in t["entries"] if e["i"] in decoded}
-    mapping, left = {}, []
     uniq = {}
     if used is not None:
         cnt: Dict[str, List[int]] = {}
         for i in sorted(used & set(decoded)):
             cnt.setdefault(t["entries"][i]["name"], []).append(i)
         uniq = {n: v[0] for n, v in cnt.items() if len(v) == 1}
+    found: Dict[int, int] = {}
+    left = []
     for k, nm in enumerate(names):
-        if nm in by_stem:
-            mapping[k] = by_stem[nm]
-        elif nm in uniq:
-            mapping[k] = uniq[nm]
+        tries = [nm]
+        m = _DUP_SUFFIX.match(nm or "")
+        if m:
+            tries.append(m.group(1))
+        for cand in tries:
+            if cand in by_stem:
+                found[k] = by_stem[cand]
+                break
+            if cand in uniq:
+                found[k] = uniq[cand]
+                break
         else:
             left.append(k)
-    if left and used is not None:
-        order = sorted(used & set(decoded))
-        if len(order) == len(names):
-            for k in list(left):
-                mapping[k] = order[k]
-            left = []
-    return mapping, left
+    claims: Dict[int, List[int]] = {}
+    for k, i in found.items():
+        claims.setdefault(i, []).append(k)
+    clash = {i: ks for i, ks in claims.items() if len(ks) > 1}
+    mapping = {k: i for k, i in found.items() if i not in clash}
+    return mapping, left, clash
 
 
 def _glb_job(args):
@@ -721,9 +738,13 @@ def _glb_job(args):
             except Exception as err:
                 out["problems"].append(f"{file}: the model {pe.path} does not parse ({err})")
                 return out
-    mapping, left = map_glb_images(names, t, decoded, used)
+    mapping, left, clash = map_glb_images(names, t, decoded, used)
     for k in left:
-        out["problems"].append(f"{file}: image {k} ({names[k]!r}) matches no entry of {e.path}")
+        out["problems"].append(f"{file}: image {k} ({names[k]!r}) matches no entry of {e.path}; name it after "
+                               f"its PNG file (browse writes the names, e.g. 009_kosmos00_mune)")
+    for i, ks in sorted(clash.items()):
+        out["problems"].append(f"{file}: images " + ", ".join(f"{k} ({names[k]!r})" for k in ks)
+                               + f" all map to entry {i} ({t['entries'][i]['name']}) of {e.path}; keep one")
     for k, i in sorted(mapping.items()):
         nm, blob, mime = images[k]
         en, orig = decoded[i]
@@ -946,6 +967,10 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
     if not out and not dry_run:
         print("--out is required (or --dry-run)", file=sys.stderr)
         return 2
+    why = report_clash(report, out, iso)
+    if why:
+        print(f"refused: {why}", file=sys.stderr)
+        return 2
     try:
         roots = resolve_roots(tree, textures, xtx, models)
         disc = Disc(iso) if _is_path(iso) else iso
@@ -1000,6 +1025,12 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
         if r["replace"]:
             xtx_repl[r["replace"][0]] = r["replace"][1]
             xtx_rows.append(r["row"])
+    masks = {k for k in xtx_repl if k[1].lower().endswith("_alpha.xtx")}
+    for (c, p) in sorted(set(xtx_repl) - masks):
+        mp = mask_for(disc, c, p)
+        if mp and (c, mp) in masks:
+            problems.append(f"{p} and its frame mask {mp} are both edited; the sheet's PNG is cut by the old mask. "
+                            f"Import the mask alone first, browse the new disc, then edit the sheet")
     if problems:
         for p in problems:
             print(f"problem: {p}", file=sys.stderr)
@@ -1208,21 +1239,47 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
         print(f"dry run: nothing written ({time.time() - t0:.0f} s)")
         return 0
     from repack import RepackError, patch_copy
+    bad: List[str] = []
+
+    def check(partial):                        # runs on <out>.partial, before it becomes --out
+        bad.extend(verify_output(iso, partial, results, xtx_rows, replacements))
+        if bad:
+            raise _VerifyFailed()
     try:
-        patch_copy(iso, out, replacements, grow=grow)
+        patch_copy(iso, out, replacements, grow=grow, check=check)
+    except _VerifyFailed:
+        for b in bad:
+            print(f"VERIFY FAILED: {b}", file=sys.stderr)
+        print(f"nothing written: {out} was not created or replaced", file=sys.stderr)
+        return 1
     except (RepackError, region.UnknownBuild) as err:
         print(f"refused: {err}", file=sys.stderr)
         return 1
-    bad = verify_output(iso, out, results, xtx_rows, replacements)
     if rep_path:
         _write_report(rep_path, rows)
         print(f"report: {rep_path}")
-    if bad:
-        for b in bad:
-            print(f"VERIFY FAILED: {b}", file=sys.stderr)
-        return 1
     print(f"verified {len(replacements)} replaced files in {out} ({time.time() - t0:.0f} s)")
     return 0
+
+
+class _VerifyFailed(Exception):
+    pass
+
+
+def report_clash(report, out, iso) -> Optional[str]:
+    """Why --report cannot be written where it points (it would overwrite the
+    disc image being written or read), or None."""
+    if not report:
+        return None
+    from repack import same_file
+    if str(report).lower().endswith(".iso"):
+        return f"--report {report} ends in .iso; the report is a CSV (default <out>.textures.csv)"
+    others = [("--out", out), ("--out", str(out) + ".partial" if out else None),
+              ("--iso", iso if _is_path(iso) else None)]
+    for flag, p in others:
+        if p and same_file(report, p):
+            return f"--report {report} is the same file as {flag} {p}"
+    return None
 
 
 def _overflow(iso, replacements) -> List[Tuple[str, int, int]]:
@@ -1499,14 +1556,19 @@ def _self_test_glb() -> List[Tuple[bool, str]]:
     t = txy.parse(blk)
     dec = {e["i"]: (e, r) for e, _w, _h, r in txy.decode(blk)}
     names = [Path(txy.entry_filename(t["entries"][i], True)).stem for i in (0, 1)]
-    m, left = map_glb_images(names, t, dec, None)
-    out.append((m == {0: 0, 1: 1} and not left, "glb images map back by PNG-file stem"))
-    m, left = map_glb_images(["face_01"], t, dec, {0, 1})
+    m, left, clash = map_glb_images(names, t, dec, None)
+    out.append((m == {0: 0, 1: 1} and not left and not clash, "glb images map back by PNG-file stem"))
+    m, left, clash = map_glb_images(names[::-1], t, dec, None)
+    out.append((m == {0: 1, 1: 0} and not left, "image order does not matter (Blender reorders images)"))
+    m, left, clash = map_glb_images(["face_01"], t, dec, {0, 1})
     out.append((m == {0: 1} and not left, "an image named after an entry name unique among the used entries maps"))
-    m, left = map_glb_images(["x", "y"], t, dec, {0, 1})
-    out.append((m == {0: 0, 1: 1} and not left, "unnamed images map by pxy.to_glb's order when the counts match"))
-    m, left = map_glb_images(["x"], t, dec, {0, 1})
-    out.append((left == [0], "an unmatched image with a different count stays unmapped (a problem)"))
+    m, left, clash = map_glb_images(["x", "y"], t, dec, {0, 1})
+    out.append((m == {} and left == [0, 1], "unmatched names are problems even when the image count fits "
+                                            "(order is never trusted)"))
+    m, left, clash = map_glb_images([names[1], names[0] + ".001", "my_new_paint"], t, dec, {0, 1})
+    out.append((m == {0: 1, 1: 0} and left == [2], "a Blender '.001' tail is ignored; a renamed image is a problem"))
+    m, left, clash = map_glb_images([names[0], names[0] + ".001"], t, dec, {0, 1})
+    out.append((m == {} and clash == {0: [0, 1]}, "two images claiming one entry are both refused"))
     g = gltf.GlbBuilder("test")
     for i in (0, 1):
         g.add_image(txy.png_bytes(16, 16, dec[i][1]), names[i])
@@ -1520,10 +1582,9 @@ def _self_test_glb() -> List[Tuple[bool, str]]:
     return out
 
 
-def _self_test_xtx() -> List[Tuple[bool, str]]:
-    """A synthetic parked-corner sheet and frame mask: the corner+mask inverse
-    keeps the masked-out pixels as they were."""
-    out = []
+def _synthetic_sheet_and_mask() -> Tuple[bytes, bytes]:
+    """A synthetic parked-corner sheet (one 48x32 CT32 image) and a frame mask
+    for it (index 1 inside a rounded box: palette 0 clear, 1 white)."""
     clen, w, h = 256, 48, 32                 # one 48x32 CT32 image: art 32 wide + 16-wide palette column
     canvas = bytearray(w * h * 4)
     pos = txy.csm1_positions()
@@ -1547,9 +1608,6 @@ def _self_test_xtx() -> List[Tuple[bool, str]]:
         body += bytes(0x30 - len(body)) + bytes(32) + px
         return body[:4] + struct.pack("<I", len(body)) + body[8:]
     data = sheet(bytes(canvas))
-    r = xtxmod.decode(data)
-    out.append((r is not None and r[3] == "corner", "a synthetic parked-corner sheet decodes as corner"))
-    # mask: index 1 inside a rounded box, palette 0 clear / 1 white
     mcan = bytearray(w * h * 4)
     mcols = [(0, 0, 0, 0), (255, 255, 255, 0x80)] + [(0, 0, 0, 0)] * 254
     for i, c in enumerate(mcols):
@@ -1563,7 +1621,16 @@ def _self_test_xtx() -> List[Tuple[bool, str]]:
             p = o // 4
             cx, cy = p % clen, p // clen
             mcan[(cy * w + cx) * 4 + o % 4] = v
-    mask = sheet(bytes(mcan))
+    return data, sheet(bytes(mcan))
+
+
+def _self_test_xtx() -> List[Tuple[bool, str]]:
+    """A synthetic parked-corner sheet and frame mask: the corner+mask inverse
+    keeps the masked-out pixels as they were."""
+    out = []
+    data, mask = _synthetic_sheet_and_mask()
+    r = xtxmod.decode(data)
+    out.append((r is not None and r[3] == "corner", "a synthetic parked-corner sheet decodes as corner"))
     view, kind = xtx_view(data, mask)
     out.append((kind == "corner+mask", "with its frame mask the sheet is corner+mask, as browse writes it"))
     png = np.frombuffer(view[2], np.uint8).reshape(-1, 4).copy()
@@ -1586,6 +1653,85 @@ def _self_test_xtx() -> List[Tuple[bool, str]]:
     return out
 
 
+def _self_test_publish(tmp: Path) -> List[Tuple[bool, str]]:
+    """The report never lands on a disc image; a sheet and its frame mask are
+    not edited together; a copy that fails verify_output is never published
+    (end to end on a minidisc image)."""
+    import contextlib
+    import io
+
+    import minidisc
+    out = []
+    a, b = tmp / "x" / "modded.iso", tmp / "x" / "src.iso"
+    out.append((report_clash(str(a), str(a), str(b)) and report_clash(str(tmp / "r.ISO"), str(a), str(b))
+                and report_clash(str(tmp / "x" / "." / "src.iso.csv"), str(a), str(tmp / "x" / "src.iso.csv"))
+                and report_clash(str(a) + ".partial", str(a), str(b))
+                and report_clash(str(a) + ".textures.csv", str(a), str(b)) is None
+                and report_clash(None, str(a), str(b)) is None,
+                "--report may not be --out, its .partial, --iso, or any .iso name"))
+    # a sheet and its frame mask edited in one run
+    data, mask = _synthetic_sheet_and_mask()
+    fake = _FakeDisc({(0, "ui\\s.xtx"): data, (0, "ui\\f_alpha.xtx"): mask})
+    view, _k = xtx_view(data, mask)
+    mview, _k = xtx_view(mask, None)
+    d = tmp / "mk" / "xtx" / "chain0" / "ui"
+    d.mkdir(parents=True)
+    pv = np.frombuffer(view[2], np.uint8).reshape(-1, 4).copy()
+    pv[pv[:, 3] > 0, 0] ^= 0x40
+    txy.write_png(d / "s.xtx.png", view[0], view[1], pv.tobytes())
+    mv = np.frombuffer(mview[2], np.uint8).reshape(mview[1], mview[0], 4).copy()
+    mv[10:14, :, :] = 0
+    txy.write_png(d / "f_alpha.xtx.png", mview[0], mview[1], mv.tobytes())
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        rc = run(fake, tree=str(tmp / "mk"), dry_run=True)
+    out.append((rc == 1 and "its frame mask ui\\f_alpha.xtx are both edited" in err.getvalue(),
+                "a sheet and its frame mask edited in the same run are refused"))
+    # end to end on a mini disc: a verified copy is published, a failed check publishes nothing
+    pal = [(k, (k * 3) & 255, 255 - k, 0x80) for k in range(64)] + [(0, 0, 0, 0)] * 192
+    blk = texenc._pal_block(128, [{"name": "hair", "fmt": txy.PSMT8, "w": 16, "h": 16, "x": 0, "y": 0,
+                                   "palx": 112, "paly": 0, "_idx": [(x + y * 3) % 64 for y in range(16)
+                                                                    for x in range(16)]}], {(112, 0): pal})
+    minidisc.register_test_executable()
+    iso = minidisc.build(tmp / "mini.iso", {"model\\a.txy": blk, "model\\b.bin": b"b" * 100})
+    dec = {e["i"]: r for e, _w, _h, r in txy.decode(blk)}
+    td = tmp / "e2e" / "textures_png" / "chain0" / "model" / "a.txy"
+    td.mkdir(parents=True)
+    px = np.frombuffer(dec[0], np.uint8).reshape(-1, 4).copy()
+    px[:, :3] = 255 - px[:, :3]
+    txy.write_png(td / "000_hair.png", 16, 16, px.tobytes())
+    o1 = tmp / "out1.iso"
+
+    def quiet(**kw):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return run(str(iso), tree=str(tmp / "e2e"), workers=1, **kw)
+    rc = quiet(out=str(o1))
+    ok = rc == 0 and o1.exists() and Path(str(o1) + ".textures.csv").exists()
+    if ok:
+        got = {e["i"]: r for e, _w, _h, r in txy.decode(minidisc.read(o1, "model\\a.txy"))}
+        ok = texenc.same(np.frombuffer(got[0], np.uint8), px.reshape(-1)).all()
+    out.append((ok, "end to end on a mini disc: the edit is written, verified and reported"))
+    rc = quiet(out=str(o1), report=str(o1))
+    out.append((rc == 2 and o1.stat().st_size == iso.stat().st_size, "--report equal to --out is refused before "
+                                                                       "any work; the disc image is left alone"))
+    before = o1.read_bytes()
+    px[:, :3] = px[:, :3] // 2
+    txy.write_png(td / "000_hair.png", 16, 16, px.tobytes())
+    real = globals()["verify_output"]
+    globals()["verify_output"] = lambda *a_: ["forced failure (self-test)"]
+    try:
+        rc1 = quiet(out=str(o1))
+        o2 = tmp / "out2.iso"
+        rc2 = quiet(out=str(o2))
+    finally:
+        globals()["verify_output"] = real
+    out.append((rc1 == 1 and o1.read_bytes() == before and rc2 == 1 and not o2.exists()
+                and not Path(str(o2) + ".textures.csv").exists() and not Path(str(o2) + ".partial").exists(),
+                "a copy that fails verification is not published: an existing output and its report stay, "
+                "a new one is not created"))
+    return out
+
+
 def self_test() -> int:
     import tempfile
     ok = True
@@ -1594,6 +1740,8 @@ def self_test() -> int:
         checks += _self_test_plan(Path(td))
     checks += _self_test_glb()
     checks += _self_test_xtx()
+    with tempfile.TemporaryDirectory() as td:
+        checks += _self_test_publish(Path(td))
     a = np.zeros((4, 4, 4), np.uint8)
     a[:, :, 3] = 255
     a[0:2, 0:2, 0] = 200

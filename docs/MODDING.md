@@ -166,7 +166,10 @@ citizen portraits and 18 item cards (cut by their frame mask, as `browse`
 shows them; pixels the mask hides cannot change and keep their colours),
 the three frame masks, `omiya\botan`, and the true-colour title words
 `yajima\titleobj.xtx`. The ten scan-palette sheets and two grey sheets are
-refused when edited ("palette not solved") and ignored when not.
+refused when edited ("palette not solved") and ignored when not. A sheet and
+the frame mask that cuts it are not edited in the same run: the sheet's PNG
+was cut by the old mask, so the command refuses the pair. Import the mask
+alone, run `browse` on the new disc, then edit the sheet.
 
 **Models.** Images inside a `.glb` from `browse` or `model` are named after
 their PNG files (`009_kosmos00_mune`), so a model edited in Blender maps back
@@ -175,9 +178,14 @@ glTF 2.0 (.glb), then put the file at `models/chain0/<path>.glb` in the tree.
 Checked with Blender 5.4.0 on 2026-11-20: a plain import and export with
 default settings comes back as 0 changed entries (the images are re-embedded
 byte for byte, only their order changes); painting a 32x32 square on one
-image changes exactly those 1,024 pixels. Files exported before images
-were named this way (entry names, which repeat) are mapped by unique name
-or by the order the exporter writes them in, and refused if neither works.
+image changes exactly those 1,024 pixels. A `.NNN` tail Blender adds to a
+repeated image name is ignored. Files exported before images were named this
+way (entry names, which repeat) are mapped by entry names that are unique
+among the entries the model uses. Image order is never used, because Blender
+writes images in its own order: an image whose name matches nothing (for
+example one replaced in Blender, which takes the new file's name) and two
+images that map to the same entry stop the import. Rename such an image to
+its PNG file's stem, or export the model again with `browse`.
 
 **Size.** Texture pages never change size (index bytes and palette words are
 rewritten in place). Only the three ARX-compressed objects can outgrow their
@@ -192,10 +200,14 @@ which is identical on both discs; run the same tree against each disc you
 play. The Disc 1 and Disc 2 reports of the demo are identical.
 
 **Checks.** Before writing, every block is encoded and decoded again with the
-scalar reference decoder; after writing, every replaced object is read from
-the new image and decoded: edited, swept, ride-along and joint-changed
+scalar reference decoder; after writing, and before the copy takes the
+`--out` name, every replaced object is read from the new image and decoded: edited, swept, ride-along and joint-changed
 entries must show their planned pictures, every other entry its original
 one, and blocks inside a file that were not edited must be byte-identical.
+If any of this fails, the copy is deleted and nothing is written (an existing
+`--out` stays as it was). The report (`--report`, default
+`<out>.textures.csv`) is written only after a verified copy is in place, or
+on a dry run; it may not name `--out`, `--iso` or any `.iso` file.
 `--verify-roundtrip` encodes every texture on a disc with its own picture as
 the target and checks the bytes come back identical: on Disc 1, 937
 standalone pages, 2,167 embedded pages (69,482 entries) and 73 UI sheets, no
