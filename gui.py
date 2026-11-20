@@ -157,6 +157,12 @@ COMMAND_HELP = {
                    "every write is read back.",
     "patch": "Replace whole objects in a copy of the disc. One replacement per line: "
              "<code>chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl</code>.",
+    "texture-import": "Edit PNGs in a copy of the <code>browse</code> folder (textures, UI sheets, or the "
+                      "images inside a model's <code>.glb</code>) and give that folder here. Only PNGs that "
+                      "differ from the disc are written, into a <em>copy</em> of the disc, and every other copy "
+                      "of the same pixels on the disc is updated with them. Shared palettes are kept for the "
+                      "other textures that use them. Chain 0 is on both discs: run it once per disc. "
+                      "<em>Dry run</em> shows what would change without writing.",
     "self-test": "Run every module's built-in checks (no disc needed).",
 }
 
@@ -170,6 +176,12 @@ FIELD_HINTS = {
     "set": {"label": "Replacements", "placeholder": "chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl"},
     "glob": {"label": "Only paths", "placeholder": "e.g. model\\char\\pc\\* (optional)"},
     "limit": {"label": "At most", "placeholder": "N objects per kind (optional, for a quick sample)"},
+    "tree": {"label": "Edited browse folder", "pick": "dir"},
+    "textures": {"label": "Textures folder", "pick": "dir"},
+    "xtx": {"label": "UI sheets folder", "pick": "dir"},
+    "models": {"label": "Models folder", "pick": "dir"},
+    "preview": {"label": "Preview folder", "pick": "dir"},
+    "report": {"label": "Report", "pick": "save", "filter": "csv"},
     "chain": {"label": "Chain", "choices": [["", "All chains"], ["0", "Chain 0 (shared data)"],
                                             ["1", "Chain 1 (Disc 1 movies and voices)"],
                                             ["2", "Chain 2 (Disc 2 movies and voices)"]]},
@@ -1112,6 +1124,12 @@ def self_test() -> int:
     patch = find_command("patch")
     out = next(f for f in patch["fields"] if f["dest"] == "out")
     check(out.get("pick") == "save", "patch --out is a disc image to write, not a folder")
+    ti = find_command("texture-import")
+    ti_out = next(f for f in ti["fields"] if f["dest"] == "out") if ti else {}
+    ti_tree = next(f for f in ti["fields"] if f["dest"] == "tree") if ti else {}
+    check(ti is not None and ti_out.get("pick") == "save" and ti_out.get("label") == "Output disc"
+          and ti_tree.get("pick") == "dir" and "copy of the disc" in ti["short"],
+          "texture-import: --out is the output disc (its help says 'copy of the disc'), --tree a folder")
     # a command cli.py does not have yet: generic fields still work
     fake = argparse.ArgumentParser()
     fs = fake.add_subparsers(dest="cmd")
