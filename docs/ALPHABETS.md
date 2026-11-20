@@ -97,6 +97,17 @@ or blank; the fixed cells hold two blanks, the tail of the box-drawing row,
 circled numbers and Roman numerals. The allocator hands out placeholder and
 blank cells first. `--keep 'éèàç'` keeps chosen Latin-1 letters.
 
+Latin-1 characters the translation itself types (`«` `»` `£` `é` and so on)
+are written as their own single byte, so `lang-scan` reserves the cell of
+every such character it finds in the scanned trees (the list shows them as
+"typed in the tree"; `--reclaim` does not free them). A `«` or `»` reserves
+its mirror too, since a right-to-left line writes one as the other. Bodies
+the encoder leaves alone are counted only when the retail reserve would count
+them: text-export shows the EUC-JP developer lines as Latin-1 (for example
+`Í½È÷£±` in batdat.us), and those are not reserved. `lang-encode` refuses a
+typed character whose cell holds a glyph of the glyphset (scan again), and
+writes nothing.
+
 A4 trails E1-FF reach the same cells as the single bytes 80-9E; the kit
 allocates cells and writes each with its cheapest code (the single byte).
 Left out by design, not tried: AD trails above C0 (they land on cells 576 and
@@ -216,7 +227,8 @@ encodes to itself byte for byte.
 
 * **Order.** Right-to-left paragraphs are put in visual order by the Unicode
   rule for runs: words reversed, Latin and digit runs (`KOS-MOS`, `3.5`) kept
-  forward, brackets mirrored, an all-Latin paragraph left alone. `--ltr`
+  forward, brackets and `«` `»` mirrored, a currency or percent sign kept
+  with its number (`£5`, `50%`), an all-Latin paragraph left alone. `--ltr`
   never reorders.
 * **Codes.** `$...;` codes have no width. On a reordered line, the codes that
   set a lasting state (`$col`, `$zoom`, `$shadow`, `$bg`, `$alpha`, `$xxN`) are
@@ -227,7 +239,8 @@ encodes to itself byte for byte.
   know; the encoder warns and the code carries onto it. Other codes in front
   of the first word stay at the front. A leading `[Speaker]` stays first.
   `%d`, `%s` and the other `%` tokens pass through; `&NN` icons count 19 px
-  (an assumption).
+  (an assumption) and are written as they are on any line, never reversed
+  or mirrored.
 * **Wrapping** at spaces to `--width` or `--width-kind KIND=PX` (kinds bank,
   menu, subtitle, battle, exe), measured with the port of the game's width
   function on the rebuilt font. Subtitles wrap at 440 px unless told
