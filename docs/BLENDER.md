@@ -24,7 +24,10 @@ and `yamamoto\mot\kosmos00.xap` when there is one); `--motion PATH[#slots]`
 picks others by path (`--motion 'yamamoto\mot\kosm00.xap#0,1'`), `--slots`
 keeps some slots, `--face` adds the face clips, `--no-motion` leaves them
 out. `browse` adds the same-named motion files and lists them in the
-`motion` column of `models.csv`.
+`motion` column of `models.csv`. A clip whose block counts are not the
+skeleton's may belong to another model: its action name ends in the counts,
+`motion/gno010#03 [counts A30/55]`, and `model --matched-only` leaves such
+clips out ([MOTION.md](MOTION.md), "Clips whose run counts differ").
 
 ## What you get
 

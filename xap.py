@@ -48,7 +48,9 @@ Block i of a run drives transform (run base + i) for i < min(clip count,
 xhr count); extra blocks are ignored and missing ones leave the transform at
 its `.xhr` rest values (each run pointer is re-read from its own offset
 field in FUN_0028f1e0).  Transform order is A, B, C, D, E, F as in xhr.py.
-Run F is never animated.
+Run F is never animated.  Which clip the game plays on which skeleton is not
+traced, so a clip whose counts differ from the skeleton's may belong to
+another model: count_mismatch finds them and add_to_glb flags them.
 
 Block: u16 mask, u16 flags, (run E from 1.3: one f32 the engine copies to
 record +0x2C; meaning unknown, kept in extras), then one key list per set
@@ -120,7 +122,8 @@ import xhr
 
 __all__ = ["XapError", "Curve", "Block", "Clip", "Xap", "parse",
            "eval_curve_ref", "eval_curve", "pose", "animation_tracks",
-           "add_to_glb", "sweep", "self_test"]
+           "driven_runs", "count_mismatch", "add_to_glb", "sweep",
+           "self_test"]
 
 KEY_SIZE = {0: 8, 1: 8, 2: 12, 3: 12, 5: 16}
 FPS = 30.0
@@ -553,6 +556,31 @@ def _order(x):
     return out
 
 
+def driven_runs(clip):
+    """The runs the clip's decoder reads: run D for a face clip
+    (FUN_00290518 / FUN_002900f8), A B C E for a 1.4 body clip
+    (FUN_0028f1e0), A B E below 1.4 (FUN_0028dec0)."""
+    if clip.face:
+        return ["D"]
+    if F32(clip.version) >= V14:
+        return ["A", "B", "C", "E"]
+    return ["A", "B", "E"]
+
+
+def count_mismatch(x, clip):
+    """{run: (clip blocks, .xhr transforms)} for every run the clip drives
+    whose block count is not the skeleton's transform count.  The engine
+    takes blocks by index either way, but nothing read so far shows that a
+    clip with other counts was made for, or is ever played on, this
+    skeleton (docs/MOTION.md, "Clips whose run counts differ")."""
+    return {r: (clip.counts.get(r, 0), x.counts[r]) for r in driven_runs(clip)
+            if clip.counts.get(r, 0) != x.counts[r]}
+
+
+def mismatch_text(mm):
+    return " ".join("%s%d/%d" % (r, c, n) for r, (c, n) in sorted(mm.items()))
+
+
 def _channels(x, clip, frames):
     """Per transform and frame, the engine's inputs: T, R, S (applied), the
     scale slot value, JO, compensation flag, and which transforms a block
@@ -571,13 +599,7 @@ def _channels(x, clip, frames):
     driven = np.zeros(n, dtype=bool)
     base = _run_bases(x)
     face = clip.face
-    if face:
-        runs = ["D"]
-    elif F32(clip.version) >= V14:
-        runs = ["A", "B", "C", "E"]
-    else:
-        runs = ["A", "B", "E"]
-    for r in runs:
+    for r in driven_runs(clip):
         for i, b in enumerate(clip.runs[r][:x.counts[r]]):
             ti = base[r] + i
             driven[ti] = True
@@ -752,13 +774,18 @@ def _const(v):
     return len(v) > 1 and float(np.abs(v - v[0]).max()) < 1e-7
 
 
-def add_to_glb(glb_bytes, x, sources):
+def add_to_glb(glb_bytes, x, sources, matched_only=False):
     """Append one glTF animation per selected non-stub clip.
 
     sources: [(label, Xap, slots or None, face)].  label is the disc path
     without chain and extension, with forward slashes, e.g.
-    "motion/shion00"; slots None = every slot.  Returns (glb bytes,
-    [summary dict per animation])."""
+    "motion/shion00"; slots None = every slot.  A clip whose block count in
+    a run it drives differs from the skeleton's (count_mismatch) is not
+    known to be made for this skeleton: it is written with the counts in
+    its name ("motion/gno010#03 [counts A30/55]", clip/xhr) and in its
+    extras ("run_counts_differ"), or left out when matched_only is true.
+    Returns (glb bytes, [summary dict per animation, "counts_differ" set
+    for a flagged one], [{"name", "counts"} per clip left out])."""
     import gltf
     js, _ = gltf.read_glb(glb_bytes)
     nodes = js.get("nodes", [])
@@ -777,7 +804,7 @@ def add_to_glb(glb_bytes, x, sources):
     except KeyError as e:
         raise XapError("the .glb skeleton has no node %s" % e)
     base = _run_bases(x)
-    anims, summary = [], []
+    anims, summary, skipped = [], [], []
     for label, xp, slots, face in sources:
         want = None if slots is None else set(slots)
         for clip, sl in xp.clips():
@@ -789,6 +816,13 @@ def add_to_glb(glb_bytes, x, sources):
                 raise XapError("%s: %s clip given as %s" % (
                     label, clip.magic.decode().strip(),
                     "face" if face else "body"))
+            name = "%s#%s" % (label, ",".join("%02d" % s for s in sl))
+            mm = count_mismatch(x, clip)
+            if mm and matched_only:
+                skipped.append({"name": name, "counts": mm})
+                continue
+            if mm:
+                name += " [counts %s]" % mismatch_text(mm)
             stats = Counter()
             tracks = animation_tracks(x, clip, stats=stats)
             if clip.face:
@@ -813,7 +847,6 @@ def add_to_glb(glb_bytes, x, sources):
                 c = channels[0]
                 c[2] = np.array([0.0, dur])
                 c[3] = np.repeat(c[3][:1], 2, axis=0)
-            name = "%s#%s" % (label, ",".join("%02d" % s for s in sl))
             shear = max(t["shear"] for t in tracks)
             ex = {"source": label, "slots": sl,
                   "version": round(float(clip.version), 2),
@@ -822,6 +855,8 @@ def add_to_glb(glb_bytes, x, sources):
                   "counts": {k: v for k, v in clip.counts.items()},
                   "xhr_counts": dict(x.counts),
                   "max_shear_residual": shear}
+            if mm:
+                ex["run_counts_differ"] = {r: list(v) for r, v in mm.items()}
             if clip.visibility:
                 ex["visibility"] = [[list(p) for p in e]
                                     for e in clip.visibility]
@@ -833,15 +868,15 @@ def add_to_glb(glb_bytes, x, sources):
             anims.append({"name": name, "extras": ex,
                           "channels": [tuple(c) for c in channels]})
             summary.append(dict(name=name, clip=clip, tracks=tracks,
-                                shear=shear))
+                                shear=shear, counts_differ=mm))
     if not anims:
-        return glb_bytes, summary
+        return glb_bytes, summary, skipped
     # every transform a joint of the skin (after the mesh's own joints), so
     # an importer makes a bone of each one the motion keys
     for si, skin in enumerate(js.get("skins", ())):
         if skin.get("skeleton") == sk[0]:
             glb_bytes = gltf.extend_skin(glb_bytes, si, node_of)
-    return gltf.append_animations(glb_bytes, anims), summary
+    return gltf.append_animations(glb_bytes, anims), summary, skipped
 
 
 # ------------------------------------------------------------------ sweep
@@ -866,7 +901,7 @@ def sweep(root, verbose=False):
     keys = Counter()
     fails = []
     comp = Counter()
-    rest_hit = rest_tot = 0
+    rest_hit, rest_tot = Counter(), Counter()
     max_shear = 0.0
     xhr_cache = {}
     for path in files:
@@ -926,7 +961,13 @@ def sweep(root, verbose=False):
             if sk is None:
                 continue
             st["clips paired with an .xhr"] += 1
-            # A2: first key of T channels, run-A joints >= 2, v1.4
+            mm = count_mismatch(sk, c)
+            if mm:
+                st["paired clips whose run counts differ"] += 1
+                for r in mm:
+                    st["paired clips whose run %s count differs" % r] += 1
+            # A2: first key of T channels, run-A joints >= 2, v1.4, split
+            # by whether the clip's run counts are the skeleton's
             if not c.face and F32(c.version) >= V14:
                 for k, b in enumerate(c.runs["A"][:sk.counts["A"]]):
                     if k < 2:
@@ -935,9 +976,9 @@ def sweep(root, verbose=False):
                         cv = b.curves.get(ax)
                         if cv is None:
                             continue
-                        rest_tot += 1
+                        rest_tot[bool(mm)] += 1
                         if abs(cv.values[0] - sk.joints[k].t[ax]) < 1e-3:
-                            rest_hit += 1
+                            rest_hit[bool(mm)] += 1
             try:
                 tr = animation_tracks(sk, c, stats=comp)
                 max_shear = max(max_shear, max(t["shear"] for t in tr))
@@ -958,7 +999,9 @@ def sweep(root, verbose=False):
     st["type-4 keys"] = 0              # parse refuses them
     st["compensation"] = dict(comp)
     st["max shear residual"] = max_shear
-    st["A2 rest T first key"] = [rest_hit, rest_tot]
+    st["A2 rest T first key"] = [rest_hit[False], rest_tot[False]]
+    st["A2 rest T first key, run counts differ"] = [rest_hit[True],
+                                                    rest_tot[True]]
     st["failures"] = fails
     return st
 
@@ -1326,17 +1369,42 @@ def self_test():
     pdata = pxy._synthetic(True, n_joint=7)[0]
     pm = pxy.parse(pdata)
     glb = pxy.to_glb(pm, None, x)
-    out, summ = add_to_glb(glb, x, [("synthetic/body", xp, None, False),
-                                    ("synthetic/face", parse(P.container(
-                                        [P.clip({"D": fblk}, 0.0, 5.0,
-                                                magic=b"FAC ")],
-                                        magic=b"FAP ")), [0], True)])
+    srcs = [("synthetic/body", xp, None, False),
+            ("synthetic/face", parse(P.container(
+                [P.clip({"D": fblk}, 0.0, 5.0, magic=b"FAC ")],
+                magic=b"FAP ")), [0], True)]
+    # run counts against the skeleton (A4 B1 C1 D1 E2 F1): clip0 has them
+    # all, clip13 (1.3, A B E read) has A3, clip12 has A2 and no B
+    assert count_mismatch(x, xp.slots[0]) == {}
+    assert count_mismatch(x, xp.slots[3]) == {"A": (3, 4)}
+    assert count_mismatch(x, xp.slots[4]) == {"A": (2, 4), "B": (0, 1)}
+    assert driven_runs(xp.slots[3]) == ["A", "B", "E"]
+    # matched_only: those two are left out and listed, not written
+    out, summ, skipped = add_to_glb(glb, x, srcs, matched_only=True)
+    js, binc = gltf.read_glb(out)
+    assert gltf.validate(js, binc) == []
+    assert [a["name"] for a in js["animations"]] == [
+        "synthetic/body#00,01", "synthetic/face#00"]
+    assert skipped == [{"name": "synthetic/body#03", "counts": {"A": (3, 4)}},
+                       {"name": "synthetic/body#04",
+                        "counts": {"A": (2, 4), "B": (0, 1)}}], skipped
+    assert all("run_counts_differ" not in a["extras"]
+               for a in js["animations"])
+    # by default every clip, the differing counts in name and extras
+    out, summ, skipped = add_to_glb(glb, x, srcs)
+    assert skipped == []
+    assert [bool(sm["counts_differ"]) for sm in summ] == [False, True, True,
+                                                          False]
     js, binc = gltf.read_glb(out)
     probs = gltf.validate(js, binc)
     assert probs == [], probs
     names = [a["name"] for a in js["animations"]]
-    assert names == ["synthetic/body#00,01", "synthetic/body#03",
-                     "synthetic/body#04", "synthetic/face#00"], names
+    assert names == ["synthetic/body#00,01", "synthetic/body#03 [counts A3/4]",
+                     "synthetic/body#04 [counts A2/4 B0/1]",
+                     "synthetic/face#00"], names
+    assert js["animations"][2]["extras"]["run_counts_differ"] == {
+        "A": [2, 4], "B": [0, 1]}
+    assert "run_counts_differ" not in js["animations"][0]["extras"]
     assert js["animations"][0]["extras"]["visibility"][0] == [[0.0, 1.0],
                                                               [10.0, 0.0]]
     node_of = {nd["name"]: i for i, nd in enumerate(js["nodes"])}
@@ -1419,7 +1487,7 @@ def main(argv=None):
         st = sweep(argv[1])
         fails = st.pop("failures")
         for k, v in st.items():
-            print("%-34s %s" % (k, json.dumps(v) if isinstance(v, (dict, list))
+            print("%-40s %s" % (k, json.dumps(v) if isinstance(v, (dict, list))
                                 else v))
         h, n = st["A2 rest T first key"]
         print("A2 ratio: %d / %d = %.4f" % (h, n, h / float(n or 1)))
@@ -1448,6 +1516,10 @@ def main(argv=None):
                                                   clip.magic.decode().strip(),
                                                   clip.version, clip.start,
                                                   clip.end))
+    mm = count_mismatch(x, clip)
+    if mm:
+        print("  run counts differ from the skeleton's (clip/xhr): %s; "
+              "not known to be made for it" % mismatch_text(mm))
     for j, tr in zip(x.joints, trs):
         print("  %s %-2s %s T %s R %s S %s%s  world %s" % (
             j.name, j.kind, "*" if tr["driven"] else " ",

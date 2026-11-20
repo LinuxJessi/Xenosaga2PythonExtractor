@@ -1,5 +1,18 @@
 # Updates
 
+## 2026-11-20 (later): motion clips that may belong to another model
+
+A clip is paired with a model by name, and some same-named files hold clips
+for more than one skeleton (`motion\gno010.xap` slots 3-4 have 30 run-A
+blocks, the skeleton 55). The 189 stem-paired clips whose block counts differ
+from the skeleton's are now flagged instead of passing as plain animations:
+the counts follow the animation name (`motion/gno010#03 [counts A30/55]`) and
+sit in its extras, `model` prints each one, `models.csv` lists them in the
+`motion` column and counts them in a new `motion_counts_differ` column, and
+`model --matched-only` leaves them out. The count alone does not decide the
+question (`jr00`'s own clips all differ in the chain run), so none is dropped
+by default. [MOTION.md](MOTION.md).
+
 ## 2026-11-20: motion plays
 
 The motion files are decoded: all 4,340 clips in the 549 `.xap` files and

@@ -191,7 +191,7 @@ def _one_model(args) -> dict:
 
     src = Path(src)
     row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "motion": "",
-           "status": ""}
+           "motion_counts_differ": "", "status": ""}
     try:
         p = pxy.parse(src.read_bytes())
         txy_data = entries = skel = None
@@ -224,7 +224,7 @@ def _one_model(args) -> dict:
             skel = None
             blob = pxy.to_glb(p, txy_data, None)
         if skel is not None and motion_files:
-            blob, row["motion"] = _add_motion(blob, skel, motion_files)
+            blob, row["motion"], row["motion_counts_differ"] = _add_motion(blob, skel, motion_files)
     except Exception as e:                           # a damaged file must not stop the others
         known = isinstance(e, (pxy.PxyError, VifError, xhr.XhrError))
         row["status"] = f"not decoded: {e}" if known else f"not decoded: {type(e).__name__}: {e}"
@@ -242,19 +242,33 @@ def _one_model(args) -> dict:
 
 
 def _add_motion(blob, skel, motion_files):
-    """The same-stem .xap clips as glTF animations (xap.py). A clip that does not decode
-    leaves the mesh as it was and says why in the models.csv "motion" column."""
+    """The same-stem .xap clips as glTF animations (xap.py): (blob, models.csv "motion"
+    text, number of clips whose run counts differ). A clip whose block count in a run it
+    drives is not the skeleton's is not known to be made for it (docs/MOTION.md): it is
+    written with the counts in its name and listed here (clip/xhr). A file that does not
+    decode leaves the mesh as it was and says why."""
     import xap
 
     try:
         sources = []
         for label, mpath in motion_files:
             sources.append((label, xap.parse(Path(mpath).read_bytes()), None, False))
-        blob2, summ = xap.add_to_glb(blob, skel, sources)
+        blob2, summ, _ = xap.add_to_glb(blob, skel, sources)
     except (xap.XapError, ValueError, KeyError, OSError) as e:
-        return blob, f"not decoded: {e}"
-    return blob2, "; ".join(f"{label}.xap: {sum(s['name'].startswith(label + '#') for s in summ)} animations"
-                            for label, _ in motion_files)
+        return blob, f"not decoded: {e}", ""
+    parts, differ = [], 0
+    for label, _ in motion_files:
+        mine = [s for s in summ if s["name"].startswith(label + "#")]
+        text = f"{label}.xap: {len(mine)} animations"
+        odd = [s for s in mine if s["counts_differ"]]
+        differ += len(odd)
+        if odd:
+            text += (f", {len(odd)} whose run counts differ from the skeleton's, not known to "
+                     f"fit it (" + ", ".join(
+                         f"#{s['name'].split('#', 1)[1].split(' ', 1)[0]} "
+                         f"{xap.mismatch_text(s['counts_differ'])}" for s in odd) + ")")
+        parts.append(text)
+    return blob2, "; ".join(parts), differ or ""
 
 
 def browse_models(out: Path, rows, limit) -> None:
@@ -282,9 +296,12 @@ def browse_models(out: Path, rows, limit) -> None:
     ok = sum(r["status"] == "ok" for r in results)
     flagged = sum(r["status"].startswith("written") for r in results)
     animated = sum("animations" in r.get("motion", "") for r in results)
+    differ = sum(r.get("motion_counts_differ") or 0 for r in results)
+    differ_models = sum(1 for r in results if r.get("motion_counts_differ"))
     unpaired = sum(1 for st in xap_by_stem if st not in model_stems)
     print(f"models: {ok + flagged}/{len(jobs)} .glb written ({flagged} with a failed check, "
-          f"{len(jobs) - ok - flagged} not decoded; {animated} with motion; {unpaired} unpaired motion "
+          f"{len(jobs) - ok - flagged} not decoded; {animated} with motion, {differ} clips in "
+          f"{differ_models} models with run counts that differ from the skeleton's, flagged; {unpaired} unpaired motion "
           f"files (no same-named model, see docs/MOTION.md); see browse/models.csv)", file=sys.stderr)
 
 

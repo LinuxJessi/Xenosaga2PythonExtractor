@@ -202,7 +202,9 @@ non-stub clip.
 * **Names**: the disc path without chain and extension, then the slot:
   `motion/shion00#01`, `yamamoto/mot/kosm00#00`. Slots sharing one clip are
   written once, `#06,07`. Nothing is named "idle" or "walk": the game's names
-  for the slots are not known.
+  for the slots are not known. A clip whose run counts differ from the
+  skeleton's carries them after the name, clip/xhr:
+  `motion/gno010#03 [counts A30/55]` (see "Clips whose run counts differ").
 * **Body clips** key every transform with translation, rotation and scale.
   Transforms the clip does not drive get their `.xhr` rest values as one
   constant key, so each action stands alone in Blender and the engine's
@@ -228,7 +230,9 @@ non-stub clip.
 * **Extras** per animation: source, slots, version, start, end, fps 30, kind,
   the clip's stream counts, the `.xhr` counts, `max_shear_residual`, the
   compensation census when there is any, `visibility` / `visibility_bits`
-  when the clip has a list, `e_extra` (the run-E f32s) when it has any.
+  when the clip has a list, `e_extra` (the run-E f32s) when it has any,
+  `run_counts_differ` ({run: [clip blocks, .xhr transforms]}) when the counts
+  of a run the clip drives are not the skeleton's.
 
 Checked (number and image): the self-test builds a skinned `.glb`, adds
 synthetic clips, reads the file back, samples it the glTF way and compares
@@ -256,6 +260,36 @@ any of them by path, on the user's judgement. Face clips are added only on
 request (`--face`, or `--motion 'motion\face_all.fap#0'`), since all 19 fit
 every skeleton with six run-D joints.
 
+### Clips whose run counts differ
+
+A matching name does not make a clip fit. How the reader applies a clip is
+read from the executable (block i of a run drives transform run base + i
+while both have one, `FUN_0028f1e0`), but nothing read so far shows which
+clip the game plays on which skeleton, so a clip with other block counts may
+have been made for another model. 189 of the 2,506 stem-paired clips have a
+block count, in a run their decoder reads (A B C E for a 1.4 body clip, A B E
+below, D for a face clip), that is not the skeleton's: run A in 52, run B in
+118, run E in 71, in 13 models (number, `--sweep`).
+
+Some of them are plainly for another skeleton. `motion\gno010.xap` slots 0-2
+have 55 run-A blocks like `gno010.xhr`, slots 3-4 have 30, and those two
+clips are byte for byte slots 3-4 of `motion\uma003.xap`, whose skeleton has
+15; `motion\uma013.xap` has two other 30-block clips beside one of 22, its
+skeleton's count. Others fit
+as far as anything can be checked: `jin_saya` (3 blocks for 4 transforms) and
+`gno003` (36 for 34) pass the rest check below on every channel, and every
+field and battle clip of `jr00` has more run-E (chain) blocks than its
+skeleton (21 or 18 for 16). The rest check splits the same way: 0.913 of the
+channels agree in clips whose counts match, 0.529 in clips whose counts
+differ (number). The count alone does not decide it, so nothing is dropped
+silently and nothing is passed off as known:
+
+* `model` and `browse` write such a clip with the counts in its animation
+  name and in the `run_counts_differ` extras; `model` prints a line for each
+  and counts them in its summary, and `models.csv` lists them per file in the
+  `motion` column (`#03 A30/55`) and counts them in `motion_counts_differ`.
+* `model --matched-only` leaves them out and prints what it left out.
+
 ## Sweep numbers (USA Disc 1 dump, chains 0-2)
 
     files 550 (549 .xap, 1 .fap); slots 8,587; stubs 4,247
@@ -281,10 +315,11 @@ with a shear residual up to 0.58. None is in the demo clips. Whether the shear
 is visible in the game is not known.
 
 Rest check (not circular; pins the order of the translation bits): over the
-version-1.4 clips of those pairs, the first key of each translation channel
-on a run-A joint (index 2 and up) equals the `.xhr` rest translation within
-1e-3 in 52,683 of 57,947 channels (0.909). The misses are hips and rescaled
-bosses. The field clips of the party key only rotations plus the roots'
+version-1.4 clips of those pairs whose run counts are the skeleton's, the
+first key of each translation channel on a run-A joint (index 2 and up)
+equals the `.xhr` rest translation within 1e-3 in 52,368 of 57,351 channels
+(0.913). The misses are hips and rescaled bosses. In the clips whose counts
+differ it is 315 of 596 (0.529). The field clips of the party key only rotations plus the roots'
 T/R/S, so this check comes from the battle and cutscene files.
 
 ## Not reproduced
@@ -304,6 +339,8 @@ T/R/S, so this check comes from the battle and cutscene files.
 * What a visibility index means (lead above: the `.pxy` node index).
 * What the run-E f32 means.
 * The real-time playback rate.
+* Which clips the game plays on which skeleton, so whether the 189
+  same-named clips whose run counts differ were made for that model.
 * How the `.xap` files without a same-named `.xhr` are bound to models; the
   demo's battle pairings `shio00` -> `shion00` and `kosm00` -> `kosmos00` rest
   on the names only.

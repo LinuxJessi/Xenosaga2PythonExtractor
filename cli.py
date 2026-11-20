@@ -196,7 +196,9 @@ def cmd_browse(args) -> int:
 def _motion_sources(byp_all, chain, stem, x, args):
     """(sources for xap.add_to_glb, notes) for `model`: the --motion files (DISCPATH or
     DISCPATH#0,1 for chosen slots), else every same-stem .xap on the disc; --face adds the
-    face clips of motion\\face_all.fap whose run-D count equals the skeleton's."""
+    face clips of motion\\face_all.fap whose run-D count equals the skeleton's. Clips whose
+    run counts differ from the skeleton's are flagged by xap.add_to_glb (left out with
+    --matched-only)."""
     import arx
     import xap
 
@@ -232,13 +234,7 @@ def _motion_sources(byp_all, chain, stem, x, args):
     sources, notes = [], []
     for path, sl in wanted:
         disc_path, xp = load(path)
-        face = xp.magic == b"FAP "
-        if face:
-            bad = sorted({c.counts.get("D", 0) for c, _ in xp.clips()} - {x.counts["D"]})
-            if bad:
-                notes.append(f"{disc_path}: run-D counts {bad} differ from the skeleton's "
-                             f"{x.counts['D']} (the engine takes blocks by index)")
-        sources.append((label(disc_path), xp, sl, face))
+        sources.append((label(disc_path), xp, sl, xp.magic == b"FAP "))
     if args.face and not any(s[3] for s in sources):
         disc_path, xp = load("motion\\face_all.fap")
         fit = sorted(s for c, sl in xp.clips() if c.counts.get("D", 0) == x.counts["D"] for s in sl)
@@ -303,10 +299,24 @@ def cmd_model(args) -> int:
                 for n in notes:
                     print(f"motion: {n}", file=sys.stderr)
                 if srcs:
-                    blob2, summ = xap.add_to_glb(blob, skel, srcs)
-                    blob = blob2
+                    blob, summ, skipped = xap.add_to_glb(blob, skel, srcs,
+                                                         matched_only=args.matched_only)
+                    for sm in summ:
+                        if sm["counts_differ"]:
+                            print(f"motion: {sm['name']}: run counts differ from the skeleton's "
+                                  f"(clip/xhr), not known to fit it; written with the counts "
+                                  f"in its name (--matched-only leaves it out)", file=sys.stderr)
+                    for sk in skipped:
+                        print(f"motion: {sk['name']} left out: run counts differ from the "
+                              f"skeleton's (clip/xhr {xap.mismatch_text(sk['counts'])})",
+                              file=sys.stderr)
+                    differ = sum(1 for sm in summ if sm["counts_differ"])
                     motion = (f"{len(summ)} animations from "
                               f"{', '.join(s[0] for s in srcs)}")
+                    if differ:
+                        motion += f" ({differ} with run counts that differ, flagged)"
+                    if skipped:
+                        motion += f", {len(skipped)} left out (run counts differ)"
             except (xap.XapError, ValueError, KeyError) as err:   # never blocks the mesh
                 print(f"motion not decoded: {err}", file=sys.stderr)
                 motion = "not decoded"
@@ -539,6 +549,10 @@ def main(argv=None) -> int:
     p.add_argument("--face", action="store_true",
                    help="also add the face clips of motion\\face_all.fap that fit the skeleton")
     p.add_argument("--no-motion", action="store_true", help="mesh and skeleton only")
+    p.add_argument("--matched-only", action="store_true",
+                   help="leave out clips whose block counts differ from the skeleton's "
+                        "(written by default with the counts in the animation name: not "
+                        "known to be made for this skeleton)")
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("sb", help="disassemble one script, dialogue inline")

@@ -146,8 +146,11 @@ Changes: [docs/UPDATES.md](docs/UPDATES.md).
 * Models: motion plays (every `.xap` / `.fap` clip decodes; one glTF action
   per clip, [docs/MOTION.md](docs/MOTION.md)), but the simulated hair and
   cloth stay stiff, the visibility lists are not applied, the game's
-  real-time playback rate is unverified, and 331 motion files whose name
-  differs from any model's are not paired automatically. Faces are oriented by their normals and materials are double-sided,
+  real-time playback rate is unverified, 331 motion files whose name
+  differs from any model's are not paired automatically, and 189 same-named
+  clips whose block counts differ from the skeleton's (some plainly another
+  model's) are written flagged, since which clip the game plays on which
+  skeleton is not traced. Faces are oriented by their normals and materials are double-sided,
   because about one triangle in thirty is stored facing the other way.
   Fifteen skeletons differ from their mesh's bind pose on some joints. Whether
   models come out mirrored, the colour scale and the alpha modes have not
