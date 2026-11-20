@@ -4,7 +4,8 @@ What the kit knows about Episode II's model files, how each fact was
 established, and what is still open. Code: `vif.py` (strict VIF walker),
 `pxy.py` (mesh decoder, invariants, GLB export), `xhr.py` (skeleton),
 `gltf.py` (GLB writer/reader), `models_sweep.py` (inventory and sweep),
-`vuprog.py` (pulls the VU1 programs out of the executable).
+`vuprog.py` (pulls the VU1 programs out of the executable). Motion clips
+and their glTF animations: [MOTION.md](MOTION.md) and `xap.py`.
 
 Evidence is of three kinds and each statement below says which:
 
@@ -373,6 +374,7 @@ material batch finds a `.txy` entry at its address with its size.
 * Alpha: the exporter marks a draw that is only in the `alpha` group
   BLEND, one in both groups MASK, others OPAQUE. This is a presentation
   choice, not read from the engine's blend setup.
-* Motion (`.xap`), face motion (`.fap`), the tables after run E in the
-  `.xhr` (collision shapes and limits for the simulated chains).
+* The tables after run E in the `.xhr` (collision shapes and limits for the
+  simulated chains). Motion (`.xap`) and face motion (`.fap`) are decoded:
+  [MOTION.md](MOTION.md).
 * Disc 2 and the Japanese discs were not swept.

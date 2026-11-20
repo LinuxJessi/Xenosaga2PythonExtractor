@@ -30,9 +30,11 @@ rebuilds all five files byte-identically from their members.
 | `yajima\titlebg2.bin` | 190 members of the title scene: 12 `pxy`, 12 `txy`, 11 `XHR `, 71 `XAC `, 71 `FAC `, 13 `XCM ` (the first `pxy` is named `E2_EVE02`) |
 
 `XAC ` (motion curves), `FAC ` (face motion) and `XCM ` (camera motion)
-appear only here and, for FAC, inside `motion\face_all.fap`. Their
-names follow the source files in the executable (`TiXacAnimCurve.euc.c`);
-their layout is not decoded.
+appear here as loose members; `XAC ` / `FAC ` are the clip format of the
+`.xap` / `.fap` files, decoded in [../MOTION.md](../MOTION.md) (`xap.py`).
+Their names follow the source files in the executable
+(`TiXacAnimCurve.euc.c`). The members here are not yet bound to their
+skeletons, and `XCM ` is not decoded.
 
 ## The title logo: `yajima\title.bin`, `title2.bin`
 
@@ -136,7 +138,8 @@ field enemies and NPCs (the names say so); fields not named.
 ## `.fap` (1: `motion\face_all.fap`)
 
 `"FAP "`, float 1.2, u32 count (19), u32 offsets: 19 `"FAC "` clips
-(version float 1.4), the characters' face animations. Not decoded.
+(version float 1.4), the characters' face animations, each keying the six
+run-D joints. Decoded: [../MOTION.md](../MOTION.md); `model --face` adds them.
 
 ## `.jrd` (2)
 

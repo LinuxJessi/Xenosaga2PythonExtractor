@@ -1,5 +1,23 @@
 # Updates
 
+## 2026-11-20: motion plays
+
+The motion files are decoded: all 4,340 clips in the 549 `.xap` files and
+`motion\face_all.fap`, layout read from the executable (the pose builder
+`FUN_0028f1e0`, the face path `FUN_00290518`, the key evaluator
+`FUN_002935e8`). `xap.py` rebuilds the engine's pose, including its
+parent-scale compensation and the face path's quirks, and writes each clip as
+a glTF animation keyed straight from the file's translation, rotation and
+scale, so nothing is decomposed. `model` adds every same-named `.xap`
+(`--motion PATH[#slots]` for others, `--face` for the face clips); `browse`
+does the same for every model and adds a `motion` column to `models.csv`.
+Every transform is now a bone in Blender. Read back the glTF way, the
+animated skeletons match the engine formula to 5e-7; the Khronos validator
+reports nothing; Blender 5.4 imports each clip as an action of the right
+length. Not reproduced: the simulated hair and cloth, the visibility lists
+(which hide nothing on this disc) and the game's real-time rate.
+[MOTION.md](MOTION.md), [BLENDER.md](BLENDER.md).
+
 ## 2026-11-10 (later): fixes from the translation review
 
 Four outside models reviewed the text work; every point and what was done is

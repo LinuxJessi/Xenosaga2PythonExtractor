@@ -322,8 +322,13 @@ names" in `.xhr` are uninitialised padding; V4-8 unpacks are colours and
 palette bytes, while weights are V2-32 or V4-32; and UVs ride in the w of
 positions and normals, not in a V2-32 unpack.
 
-`.xap` 1.2 and `.fap` 1.2 (motion and face motion) are offset tables, not
-decoded.
+`.xap` 1.2 and `.fap` 1.2 (motion and face motion): decoded. An offset table
+of `XAC ` / `FAC ` clips (a 16-byte stub is an empty slot); each clip holds
+one block per animated transform (runs A, B, C, E for the body, D for the
+face) with a key curve per keyed channel (translation, rotation, scale), and
+version 1.4 body clips a visibility list. All 4,340 clips on the disc decode
+and tile exactly; `model` and `browse` write them as glTF animations. Layout,
+evidence and what is open: [MOTION.md](MOTION.md).
 
 ## Small side files
 
