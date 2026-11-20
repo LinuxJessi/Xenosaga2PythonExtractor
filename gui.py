@@ -146,7 +146,9 @@ COMMAND_HELP = {
               "and a WAV rendered the way the PS2 plays it, dialogue as UTF-8, scripts as readable listings, "
               "movies as MP4 (ffmpeg).",
     "model": "One model straight from the disc to a <code>.glb</code> for Blender: the mesh with the "
-             "textures and skeleton of the same name. <code>browse</code> does every model at once.",
+             "textures and skeleton of the same name, and its motion clips (<code>.xap</code>) as "
+             "animations, one action per clip at 30 frames per second. <code>browse</code> does every "
+             "model at once.",
     "sb": "Disassemble one scene or map script, with every native call named and every "
           "spoken line shown beside the instruction that uses it. "
           "Example path: <code>cf\\sc1010.sb</code>.",

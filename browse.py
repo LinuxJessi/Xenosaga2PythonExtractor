@@ -183,14 +183,15 @@ def _one_model(args) -> dict:
     beside it, to a .glb Blender opens: mesh, UVs, textures, vertex colours, skin weights
     and an armature. A file the decoder does not understand is reported, never guessed at;
     one that decodes but fails a numeric check is still written and says which check."""
-    src, dest, path = args
+    src, dest, path, motion_files = args
     import pxy
     import txy
     import xhr
     from vif import VifError
 
     src = Path(src)
-    row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "status": ""}
+    row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "motion": "",
+           "status": ""}
     try:
         p = pxy.parse(src.read_bytes())
         txy_data = entries = skel = None
@@ -220,7 +221,10 @@ def _one_model(args) -> dict:
             # a skeleton file with fewer transforms than the mesh has joints: the mesh
             # is still right, so it is written with its joints left where the file binds them
             row["skeleton"] = f"not used ({e})"
+            skel = None
             blob = pxy.to_glb(p, txy_data, None)
+        if skel is not None and motion_files:
+            blob, row["motion"] = _add_motion(blob, skel, motion_files)
     except Exception as e:                           # a damaged file must not stop the others
         known = isinstance(e, (pxy.PxyError, VifError, xhr.XhrError))
         row["status"] = f"not decoded: {e}" if known else f"not decoded: {type(e).__name__}: {e}"
@@ -237,8 +241,39 @@ def _one_model(args) -> dict:
     return row
 
 
+def _add_motion(blob, skel, motion_files):
+    """The same-stem .xap clips as glTF animations (xap.py). A clip that does not decode
+    leaves the mesh as it was and says why in the models.csv "motion" column."""
+    import xap
+
+    try:
+        sources = []
+        for label, mpath in motion_files:
+            sources.append((label, xap.parse(Path(mpath).read_bytes()), None, False))
+        blob2, summ = xap.add_to_glb(blob, skel, sources)
+    except (xap.XapError, ValueError, KeyError, OSError) as e:
+        return blob, f"not decoded: {e}"
+    return blob2, "; ".join(f"{label}.xap: {sum(s['name'].startswith(label + '#') for s in summ)} animations"
+                            for label, _ in motion_files)
+
+
 def browse_models(out: Path, rows, limit) -> None:
-    jobs = [(str(_src(out, r)), str(_dest(out, "models", r).with_suffix(".glb")), r["path"])
+    # motion pairing: '<dir>\\<stem>.xap' anywhere on the disc whose stem is the model's
+    # (motion\\ and yamamoto\\mot\\); other .xap files are bound by tables not traced
+    xap_by_stem: Dict[str, Dict[str, dict]] = {}
+    for r in rows:
+        if r["path"].lower().endswith(".xap"):
+            stem = r["path"].lower().rsplit("\\", 1)[-1][:-4]
+            xap_by_stem.setdefault(stem, {}).setdefault(r["path"].lower(), r)
+    model_stems = {r["path"].lower().rsplit("\\", 1)[-1][:-4] for r in rows
+                   if r["path"].lower().endswith(".xhr")}
+
+    def motion_for(r):
+        stem = r["path"].lower().rsplit("\\", 1)[-1][:-4]
+        return [(m["path"].replace("\\", "/")[:-4], str(_src(out, m)))
+                for _, m in sorted(xap_by_stem.get(stem, {}).items())]
+
+    jobs = [(str(_src(out, r)), str(_dest(out, "models", r).with_suffix(".glb")), r["path"], motion_for(r))
             for r in rows if r["kind"] == "pxy" or r["path"].lower().endswith(".pxy")]
     jobs = jobs[:limit] if limit else jobs
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
@@ -246,8 +281,11 @@ def browse_models(out: Path, rows, limit) -> None:
     _write_csv(out / "browse" / "models.csv", results)
     ok = sum(r["status"] == "ok" for r in results)
     flagged = sum(r["status"].startswith("written") for r in results)
+    animated = sum("animations" in r.get("motion", "") for r in results)
+    unpaired = sum(1 for st in xap_by_stem if st not in model_stems)
     print(f"models: {ok + flagged}/{len(jobs)} .glb written ({flagged} with a failed check, "
-          f"{len(jobs) - ok - flagged} not decoded; see browse/models.csv)", file=sys.stderr)
+          f"{len(jobs) - ok - flagged} not decoded; {animated} with motion; {unpaired} unpaired motion "
+          f"files (no same-named model, see docs/MOTION.md); see browse/models.csv)", file=sys.stderr)
 
 
 # ------------------------------------------------------------------- fonts
