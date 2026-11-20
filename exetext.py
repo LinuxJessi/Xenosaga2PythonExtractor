@@ -18,22 +18,39 @@ through the same print function as all other text (FUN_00197bb8, the byte
 reading of ``font.us_two_byte``), so the tree uses the kit's USA codec.
 
 **What is listed.** A string is a NUL-terminated run of at least 2 bytes,
-each 0x20-0x7E, 0x09, 0x0A or from 0x80 up, that the code points at:
+each 0x20-0x7E, 0x09, 0x0A or from 0x80 up, with an ASCII letter, digit or
+sign in it or reading as Japanese (EUC-JP / Shift-JIS developer strings,
+marked); bytes 0x80-0x9F only in a Japanese reading, other control bytes
+only in a run with three ASCII letters (the title overlay's memory-card
+prompts carry 0x19 0x03 and 0x0C codes). And the code points at it:
 
-* a 32-bit word in a loaded segment that is not code-only, equal to the
-  string's address (a pointer in a table or a struct);
-* a ``lui rX,hi`` followed in the same basic block (up to the next branch
-  or jump and its delay slot, or until rX is written) by an ``addiu``,
-  ``ori`` or a load/store with base rX whose address is the string's;
-* an ``addiu``/load with base ``$gp`` (gp read from the boot ELF's
+* a 32-bit word in a data part equal to the string's address (a pointer in a
+  table or a struct);
+* a ``lui rX,hi`` and then an ``addiu``, ``ori``, ``daddiu`` or byte
+  load/store with base rX whose address is the string's. The ``lui`` is
+  followed down the straight path: through the delay slot and the
+  fall-through of a conditional branch, saved registers (s0-s8) across
+  calls, until rX is written or an unconditional jump or ``jr`` ends the
+  path. As a fallback (Episode I's ``last_lui``), a ``lui`` reached only
+  through a label (switch arms sharing one ``lui``, a ``lui`` in a likely
+  branch's slot) counts when the address is exactly a string's start;
+* an ``addiu``/byte load with base ``$gp`` (gp read from the boot ELF's
   ``.reginfo``, 0x006A2DF0 on the USA build): ``Next Lv`` and ``Zone`` live in
-  ``.sdata`` and are reached this way.
+  ``.sdata``.
 
-Segments flagged executable are scanned as code, segments flagged writable
-as data; the overlays and the boot ELF's resident overlay segment are both
-(RWX), so they get both scans. A data word or an instruction can look like a
-reference by chance: such a false hit only adds a listed string or ends a
-neighbour's slot early, never the other way round.
+Word and float loads and stores form addresses too: those end slots but do
+not make a string. A segment flagged executable and not writable is code, one
+not executable is data. The overlays are one RWX segment each (one section,
+code then data): their code is taken to end after the last ``jr ra``. A
+function's first instruction (``addiu sp,sp,-N``) and ``jal`` targets are
+never strings. A data word or an instruction can still look like a reference
+by chance: such a false hit only adds a listed string or ends a neighbour's
+slot early, never the other way round.
+
+Cross-checked 2026-11-20 against the Ghidra listing of the boot ELF (1,106
+strings): 24 are not found, all developer error messages whose ``lui`` sits
+on another path with the register reused in between. Every string of the
+OV01 and OV02 listings is found.
 
 **Which file owns an address.** OV01.OVL and OV02.OVL both load at
 0x00A80000, and the boot ELF carries a third segment at the same address (its
@@ -327,8 +344,13 @@ def _textlike(raw: bytes) -> bool:
     """At least 2 bytes, each 0x20-0x7E, 0x09, 0x0A or from 0x80 up; and either one printable
     ASCII byte or the whole run reading as EUC-JP with kana or kanji (a developer string),
     so float constants and code bytes are not taken for text."""
-    if len(raw) < MIN_LEN or not all(0x20 <= b <= 0x7E or b in (0x09, 0x0A) or b >= 0x80 for b in raw):
+    if len(raw) < MIN_LEN:
         return False
+    if not all(0x20 <= b <= 0x7E or b in (0x09, 0x0A) or b >= 0x80 for b in raw):
+        # other control bytes: the title and memory-card screens (OV02) carry 0x19 0x03 and
+        # 0x0C codes in their prompts; taken only with three ASCII letters in the run
+        if 0x7F in raw or sum(0x41 <= (b | 0x20) - 0x20 <= 0x5A for b in raw if b < 0x80) < 3:
+            return False
     if any(0x80 <= b <= 0x9F for b in raw):           # never text on the USA build, but Shift-JIS leads
         return bool(_euc_hint(raw))
     return any(0x21 <= b <= 0x7E for b in raw) or bool(_euc_hint(raw))
@@ -497,7 +519,8 @@ def _euc_hint(raw: bytes) -> str:
             t = raw.decode(enc)
         except UnicodeDecodeError:
             continue
-        if any(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF or 0xFF61 <= ord(c) <= 0xFF9F for c in t):
+        jp = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF or 0xFF61 <= ord(c) <= 0xFF9F for c in t)
+        if jp >= 2 and 2 * jp >= len(t.replace(" ", "")):
             return f"{enc.replace('_', '-').upper()}: " + t.replace("\n", "\\n").replace("\t", " ")
     return ""
 
@@ -692,7 +715,7 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
                     continue
                 if len(raw) > s.max:
                     problems.append(f"{key}: {len(raw)} bytes, but its slot holds max {s.max} bytes "
-                                    f"(0x{va:08x}..0x{va + s.max:08x} plus the terminator); shorten it by "
+                                    f"(0x{va:08x}-0x{va + s.max:08x} with the terminator); shorten it by "
                                     f"{len(raw) - s.max}")
                     continue
                 why = checker.check(codec, body)
@@ -831,7 +854,8 @@ def _test_layout():
     """Strings and code for the synthetic boot ELF: {name: VA} and the data bytes past the tables."""
     S = {"pair": 0x63F000, "ori": 0x63F010, "load": 0x63F020, "twice": 0x63F030, "padded": 0x63F040,
          "unref": 0x63F060, "ptr": 0x63F070, "inner": 0x63F080, "gp": 0x647FF0, "blocked": 0x63F0A0,
-         "late": 0x63F0B0, "slot": 0x63F0C0, "saved": 0x63F0D0, "arm": 0x63F0E0}
+         "late": 0x63F0B0, "slot": 0x63F0C0, "saved": 0x63F0D0, "arm": 0x63F0E0,
+         "ctl": 0x63F0F0, "noise": 0x647FE0}
     return S
 
 
@@ -848,7 +872,7 @@ def synthetic_boot() -> bytes:
     put = {"pair": b"Saving...", "ori": b"Total Exp", "load": b"Class Lv", "twice": b"Zone",
            "padded": b"No items to sell.", "unref": b"Unused", "ptr": b"Next Lv", "inner": b"Hello World",
            "gp": b"GP str", "blocked": b"Cut off", "late": b"\xa4\xa6Xy", "slot": b"Delay", "saved": b"Saved reg",
-           "arm": b"Arm two"}
+           "arm": b"Arm two", "ctl": b"\x19\x03Card OK", "noise": b"\x19\x03\x0cAB\x01"}
     for k, v in put.items():
         o = S[k] - DATA_VA
         seg[o:o + len(v)] = v
@@ -863,6 +887,8 @@ def synthetic_boot() -> bytes:
     code += [_i(0x0F, 0, a0, _hi(S["padded"])), _i(0x09, a0, a1, S["padded"])]
     code += [_i(0x0F, 0, a0, _hi(S["inner"])), _i(0x09, a0, a0, S["inner"])]
     code += [_i(0x09, GP, a0, S["gp"] - GP_VAL)]                                         # gp-relative
+    code += [_i(0x0F, 0, a0, _hi(S["ctl"])), _i(0x09, a0, a0, S["ctl"])]                 # control bytes
+    code += [_i(0x0F, 0, a0, _hi(S["noise"])), _i(0x09, a0, a0, S["noise"])]             # ... too few letters
     code += [_i(0x0F, 0, a0, _hi(S["late"])), _i(0x09, a0, a0, S["late"])]
     code += [_i(0x0F, 0, a0, _hi(prof.ascii_table_va + 0x40)),                           # into the font table
              _i(0x09, a0, a0, prof.ascii_table_va + 0x40)]
@@ -937,7 +963,7 @@ def self_test() -> int:
             S["inner"]: (b"Hello World", 5, ["hilo"]), S["inner"] + 6: (b"World", 25, ["ptr"]),
             S["gp"]: (b"GP str", 15, ["gp"]), S["late"]: (b"\xa4\xa6Xy", 15, ["hilo"]),
             S["slot"]: (b"Delay", 15, ["hilo"]), S["saved"]: (b"Saved reg", 15, ["hilo"]),
-            S["arm"]: (b"Arm two", 31, ["hilo"])}
+            S["arm"]: (b"Arm two", 15, ["hilo"]), S["ctl"]: (b"\x19\x03Card OK", 15, ["hilo"])}
     check(set(got) == set(want), "exactly the referenced strings are listed: lui in a delay slot, a saved register "
                                  "across a call, a use behind a label; not the unreferenced one, not past a return, "
                                  "not the font table, not after the register is rewritten")
@@ -971,7 +997,7 @@ def self_test() -> int:
         check(rc == 0 and set(man["files"]) == {BOOT_TREE, "OV01.OVL.exe.txt"} and man["build"] == "us"
               and man["files"][BOOT_TREE]["name"] == "SLUS_208.92" and man["files"][BOOT_TREE]["role"] == "boot",
               "export writes the manifest and one tree file per executable")
-        check("BOOT.exe.txt (SLUS_208.92): 14 strings" in err, "export prints the count per file")
+        check("BOOT.exe.txt (SLUS_208.92): 15 strings" in err, "export prints the count per file")
         changes, problems = plan(src, tree)
         check(changes == {} and problems == [], "an unedited tree changes nothing")
         rc, err = q(import_, src, tree, td / "none.iso")
