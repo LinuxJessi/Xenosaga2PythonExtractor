@@ -102,10 +102,11 @@ def toc_events(paths_sectors_sizes: List[Tuple[str, int, int]]) -> List[toc.Even
 
 
 def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
-          slack: Dict[str, int] = None, elf: bytes = None) -> Path:
+          slack: Dict[str, int] = None, elf: bytes = None, root_files: Dict[str, bytes] = None) -> Path:
     """Write the image. ``files`` maps TOC path -> bytes, laid out in the given
     order; ``slack`` adds spare sectors after a path (a slot larger than the file);
-    ``elf`` replaces the stand-in boot executable (``synthetic_executable``)."""
+    ``elf`` replaces the stand-in boot executable (``synthetic_executable``);
+    ``root_files`` are extra plain files in the root directory after it (``OV01.OVL``)."""
     slack = slack or {}
     toc_sectors = 1
     rows, cur, blobs = [], toc_sectors, []
@@ -120,12 +121,17 @@ def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
     elf = TEST_ELF if elf is None else elf
     elf_sectors = max(1, (len(elf) + SECTOR - 1) // SECTOR)
     root_lba, cnf_lba, elf_lba = 18, 19, 20
-    toc_lba = elf_lba + elf_sectors
+    extra, lba = [], elf_lba + elf_sectors
+    for name, data in (root_files or {}).items():
+        extra.append((name, lba, data))
+        lba += max(1, (len(data) + SECTOR - 1) // SECTOR)
+    toc_lba = lba
     f01_lba = toc_lba + toc_sectors
     f02_lba = f01_lba + len(body) // SECTOR
     total = f02_lba + 1
     root = _record(b"\x00", root_lba, SECTOR, True) + _record(b"\x01", root_lba, SECTOR, True)
     for name, lba, size in (("SYSTEM.CNF;1", cnf_lba, len(cnf)), (boot + ";1", elf_lba, len(elf)),
+                            *((n + ";1", l, len(d)) for n, l, d in extra),
                             ("XENOSAGA.00;1", toc_lba, len(toc_bytes)),
                             ("XENOSAGA.01;1", f01_lba, len(body)), ("XENOSAGA.02;1", f02_lba, SECTOR)):
         root += _record(name.encode("ascii"), lba, size)
@@ -142,6 +148,8 @@ def build(path, files: Dict[str, bytes], boot: str = "SLUS_208.92",
     img[root_lba * SECTOR:root_lba * SECTOR + len(root)] = root
     img[cnf_lba * SECTOR:cnf_lba * SECTOR + len(cnf)] = cnf
     img[elf_lba * SECTOR:elf_lba * SECTOR + len(elf)] = elf
+    for _, l, d in extra:
+        img[l * SECTOR:l * SECTOR + len(d)] = d
     img[toc_lba * SECTOR:toc_lba * SECTOR + len(toc_bytes)] = toc_bytes
     img[f01_lba * SECTOR:f01_lba * SECTOR + len(body)] = body
     out = Path(path)

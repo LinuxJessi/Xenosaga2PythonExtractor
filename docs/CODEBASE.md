@@ -38,6 +38,7 @@ The Episode I kit's rules, kept (the first one with numpy added):
                             │                         spu2synth.py                  the PS2's music render
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
+                            ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
                             └─ patch / recolor ─► repack.py, recolor.py
 ```
 
@@ -59,13 +60,14 @@ The Episode I kit's rules, kept (the first one with numpy added):
 | `sbl.py` | script text banks: parse, rebuild, edit |
 | `sb.py` | the script machine: parse, disassemble, check ([SCRIPTS.md](SCRIPTS.md)) |
 | `textpack.py` | dialogue as an editable UTF-8 tree, and back onto a disc copy |
+| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree; written back in place (from the Episode I kit's `ovltext.py`) |
 | `vsf.py` | KORG sample banks to WAV |
 | `prj.py` | KORG projects: keys, programs, SoundFont 2 ([MUSIC.md](MUSIC.md)) |
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |
 | `songfx.py` | the songs' effect settings, and renders that follow them |
 | `spu2synth.py` | the songs as the PS2 plays them: KORG's driver rules on a model of the SPU2 and its reverb (numpy; [MUSIC.md](MUSIC.md)) |
 | `smallfiles.py` | packs, title logos, the save icon, the battle database, map/actor tables |
-| `repack.py` | writes objects back into a disc copy (same size, or grown and moved) |
+| `repack.py` | writes objects back into a disc copy (same size, or grown and moved); plain ISO files in place (`fs_replacements`) |
 | `recolor.py` | hue-shifts named textures in every copy on a disc |
 | `gui.py` | the local web GUI |
 | `toolfind.py` | finds ffmpeg: the copy bundled under `tools/` first, then PATH |

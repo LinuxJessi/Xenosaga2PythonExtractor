@@ -47,6 +47,8 @@ python cli.py natives     --iso "Disc 1.iso" --iso "Disc 2.iso" --out natives/  
 python cli.py text-export --iso "Disc 1.iso" --out text/
 python cli.py dialogue    --iso "Disc 1.iso" --iso "Disc 2.iso" --out lines/ --voice   # every line, in play order, with voice clips
 python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
+python cli.py exe-export  --iso "Disc 1.iso" --out exe/            # strings in the executables (Saving..., prompts)
+python cli.py exe-import  --iso modded.iso --text exe/ --out final.iso [--retail "Disc 1.iso"]   # in place; run last
 python cli.py font-extract --iso "Disc 1.iso" --out font/         # sheets as PNG, metrics, byte-to-cell table
 python cli.py font-rebuild --ref font/font0.us --sheets font/ --out new_font0.us
 python cli.py patch       --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
@@ -121,6 +123,13 @@ reading every write back. Lines may grow or shrink inside the slot. A
 same-length edit changes exactly the edited bytes of the image (checked).
 Checked in PCSX2: a recoloured title menu, and subtitle files rewritten and
 relocated past the end of the image (docs/MODDING.md).
+
+The few displayed strings that live in the game's code (`Saving...`, the
+memory-card and disc-change prompts, `Total Exp`) go through `exe-export` /
+`exe-import`: each is rewritten in place, at most the `max N` bytes its
+header gives. Run `exe-import` last: afterwards the executable is no longer
+the retail one and the other text commands refuse the image; `--retail`
+redoes an image that was exe-patched before.
 
 ## How it is built
 
