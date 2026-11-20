@@ -29,14 +29,25 @@ game's own reading, to the cell the encoder meant; `text-import` accepts
 the result, including its subtitle checks; Disc 1 and Disc 2 take the same
 fonts and chain 0 text.
 
-**Not seen in the running game yet:** lone high bytes in any surface (the
-visible retail English never uses them, apart from the `A1 FC` marker at the
-end of 190 tutorial lines), A4 pairs from A4A6 up, AD cells, and every
-surface's handling of them (field window, menus, battle, movie subtitles,
-cfe cutscenes, the save screen). Everything about how the engine draws is
-read from the executable. The LANGTEST disc (a sibling work item) is meant to
-exercise each tier in each surface; until it has, treat this page as a plan
-backed by code reading.
+**Seen in the running game** (PCSX2 2.9.175, the LANGTEST disc, 2026-11-20;
+the worked example at the end of this page): lone bytes 0x80-0x9F and
+0xA0-0xFF in movie subtitles and cfe cutscene lines, lone bytes 0xA0-0xFF
+in the save screen's title (a `.txd` menu string) and in an executable
+string (`Saving...`), A4 pairs from A4A6 up in the field message window,
+and AD cells in the field window, movie subtitles, cfe lines and the save
+screen's title. Right-to-left lines pre-wrapped at 410 px are left alone by
+the field window; subtitle and cfe lines are centred per line.
+
+**Failed in the running game:** the party names of the field menu
+(`MainMenu.txd` blocks 0000, 0003, 0012 in Georgian, lone bytes) are drawn
+blank. Why is not known; the same bytes are fine in other surfaces.
+
+**Not reached or not tested:** the battle HUD (`batdat.us`, and whether it
+takes names from `batdat.us` or `MainMenu.txd`), lone bytes in the field
+message window (the Arabic there used A4 pairs only), `--tight`, and which
+face each surface uses (both faces carry every glyph, so the captures do not
+tell them apart). Everything else about how the engine draws is read from
+the executable.
 
 ## How the game draws text (read from SLUS_208.92)
 
@@ -66,8 +77,11 @@ backed by code reading.
 * **Wrapping.** The field message window wraps by itself: `FUN_002865f0` asks
   `FUN_00196118` how many BYTES fit the window width and breaks at spaces;
   3,853 of the 3,886 retail `msgDtl` strings are one line and rely on it.
+  The window's width, measured on the retail disc (worked example), is at
+  least 412 and below 447 px, with `$xx1,4` (a 5 px space; the string
+  `$xx1,4;` at 0x69DCF0 is used from 0x281FC8, inside the window's code).
   Movie subtitles (packer `FUN_001e7a08`) and cfe lines (`FUN_0024b450`) are
-  not wrapped; each line is centred. The speaker tag `[...]` is cut off
+  not wrapped; each line is centred (seen in game). The speaker tag `[...]` is cut off
   bytewise at the start (`FUN_00282380`, `FUN_00282338`). The two characters
   `\n` and a real 0x0A both break a line (`FUN_002870b0`).
 
@@ -137,7 +151,8 @@ python cli.py lang-scan --iso "Disc 1.iso" --text tr/ --font Kohinoor.ttc --face
     --font0 fonts-ar/font0.us --font1 fonts-ar/font1.us --out fonts/
 
 # 3. encode
-python cli.py lang-encode --text tr/ --glyphset fonts/glyphset.json --out tr-enc/ --width-kind bank=360
+python cli.py lang-encode --text tr/ --glyphset fonts/glyphset.json --out tr-enc/ \
+    --width-kind bank=410 --space-px 5 --align right
 
 # 4. the fonts into a copy of each disc (chain 0 is on both), then the text
 python cli.py patch --iso "Disc 1.iso" --out fonts1.iso \
@@ -194,7 +209,9 @@ pair, so there are two blank columns between glyphs, as between retail
 letters. Joining scripts (Arabic) then show a small gap inside words.
 `--tight` puts the ink at left - 1..right + 1 instead, so joined letters
 touch; that relies on the draw range read from the code (left - 1 to
-right + 1) and has not been seen in the game.
+right + 1) and has not been seen in the game. (In PCSX2 the Arabic of the
+LANGTEST disc, drawn without `--tight`, read as joined; the Devanagari
+headline showed the gaps.)
 
 `--script` names the ISO 15924 script whose words this run collects (Arab,
 Hebr, Syrc, Thaa, Deva, Beng, Guru, Gujr, Taml, Telu, Knda, Mlym, Sinh,
@@ -227,7 +244,9 @@ encodes to itself byte for byte.
   know; the encoder warns and the code carries onto it. Other codes in front
   of the first word stay at the front. A leading `[Speaker]` stays first.
   `%d`, `%s` and the other `%` tokens pass through; `&NN` icons count 19 px
-  (an assumption).
+  (an assumption). A button tag `<○>` (also `<△>`, `<□>`, `<×>`) counts as
+  wide as its symbol: the field window draws the button picture and no
+  brackets (seen in game, see the worked example).
 * **Wrapping** at spaces to `--width` or `--width-kind KIND=PX` (kinds bank,
   menu, subtitle, battle, exe), measured with the port of the game's width
   function on the rebuilt font. Subtitles wrap at 440 px unless told
@@ -235,13 +254,17 @@ encodes to itself byte for byte.
   other kinds do not wrap unless told. The field window re-wraps a line
   that is too wide, from the left, which scrambles a right-to-left line, so
   bank lines in a right-to-left script need `--width-kind bank=PX` below the
-  window width. **That width has not been read**; the encoder warns when an
-  RTL bank paragraph is encoded without a width. The LANGTEST measures it.
+  window width. **Measured on the retail disc: at least 412 and below 447
+  px**, so `--width-kind bank=410` (seen in game: lines encoded at 410 were
+  not re-wrapped). The encoder warns when an RTL bank paragraph is encoded
+  without a width.
 * **Space.** The space is A1A1, cell 0, pair (0, 19): it advances `$xx1` + 1,
-  9 px in the subtitle and cfe states (`$xx1,8`). The field window's `$xx1`
-  has not been read; `--space-px 9` is assumed. `--align right` pads RTL
-  lines of banks and menus with spaces; subtitles and cfe lines are centred
-  by the engine and never padded.
+  9 px in the subtitle and cfe states (`$xx1,8`) and 5 px in the field
+  window (`$xx1,4`, read from the code and measured), which is what
+  `--align right` padding needs: give `--space-px 5` for field-window text
+  (the default 9 left a padded Arabic line short of its neighbour in game).
+  `--align right` pads RTL lines of banks and menus with spaces; subtitles
+  and cfe lines are centred by the engine and never padded.
 
 Per kind:
 
@@ -300,4 +323,204 @@ give `NAME_0.png`, `NAME_1.png`, ...
   joined forms with the two-column gap; Devanagari conjuncts and vowel signs
   in place).
 
-Not yet: any of it in PCSX2.
+In PCSX2: see the worked example below.
+
+## Worked example: the LANGTEST disc
+
+A copy of USA Disc 1 that shows four scripts in the first minutes of a New
+Game, built on 2026-11-20 with kit commands only and booted in PCSX2
+v2.9.175. It is the Episode II counterpart of the Episode I kit's LANGTEST
+(its `docs/SCRIPTS.md`). One surface failed and one was not reached; both
+are recorded below with what was learned.
+
+**What plays first** (from the scripts, `natives` listings): New Game runs
+`cf\sc7001.sb`, whose only bank string starts movie `s010100` (the news
+report, subtitles `movie\en\s010100.txt` in chain 1). Then `cf\sc8001.sb`,
+the Old Miltia real-time event (cfe class, lines through `cfe.setMes`), then
+`cf\sc1010.sb`, the first field with the first save point: blocks 0004 and
+0005 go through `talk.msgDtl`, 0006 through `talk.smsg`. In the game both
+draw in the same box at the bottom of the screen.
+
+### The tree
+
+`tr/` is the `text-export` of Disc 1 (its `xs2-text-export.json`) plus only
+these files, written in logical order, speaker tags and `<○>` kept:
+
+| File | Blocks | Script | Surface |
+|---|---|---|---|
+| `chain0/cf/en/sc1010.sbl.txt` | 0004 `[Canaan]ما هذا الشيء؟`, 0005 `[chaos]إنها نقطة حفظ.`, 0006 `[chaos]إذا لمستها وضغطت <○>، يمكنك تسجيل تقدمك الحالي واستعادة صحتك.` | Arabic | field box (font1) |
+| `chain1/movie/en/s010100.sub.txt` | cues 00:14:15, 00:16:20, 00:19:14 (`आप यहाँ जो देख रहे हैं, वह असली फुटेज है`, ...) | Hindi | movie subtitles |
+| `chain0/cf/en/sc8001.sbl.txt` | 0006-0008 (`लगता है हम अपने लक्ष्य से काफ़ी दूर हैं।`, ...) | Hindi | cfe event lines |
+| `chain0/yamamoto/batdat.us.txt` | S00 @0x0564 `ქაოსი` (max 5), @0x0578 `ჯინ` (max 3) | Georgian | battle |
+| `chain0/yosikawa/MainMenu.txd.txt` | 0000 `ქაოსი`, 0003 `ჯინ`, 0012 `ქანაანი`, 0512 `አስቀምጥ` | Georgian, Amharic | field menu, save screen |
+
+`tr-exe/` is the `exe-export` of Disc 1 (manifest and `BOOT.exe.txt` only)
+with `### @0x0068b678 max 15 bytes` `Saving...` → `በማስቀመጥ ላይ...`.
+
+### The commands
+
+Every command and its output went into `build.log`; the disc builds from
+them alone (about 90 seconds). Fonts from `/System/Library/Fonts`.
+
+```sh
+R="…(USA) (Disc 1).iso"; F=/System/Library/Fonts
+python cli.py lang-scan --iso "$R" --text tr --font $F/SFGeorgian.ttf --script Geor --language ka --out font-ka
+python cli.py lang-scan --iso "$R" --text tr --font $F/Kohinoor.ttc --face 0 --script Deva --language hi \
+    --extend font-ka/glyphset.json --font0 font-ka/font0.us --font1 font-ka/font1.us --out font-hi
+python cli.py lang-scan --iso "$R" --text tr --text tr-exe --font $F/Supplemental/KefaIII.ttf --script Ethi \
+    --language am --prefer fixed --extend font-hi/glyphset.json --font0 font-hi/font0.us --font1 font-hi/font1.us --out font-am
+python cli.py lang-scan --iso "$R" --text tr --font $F/SFArabic.ttf --script Arab --language ar --rtl --prefer pair \
+    --extend font-am/glyphset.json --font0 font-am/font0.us --font1 font-am/font1.us --out font-ar
+python cli.py lang-encode --text tr --glyphset font-ar/glyphset.json --out tr-enc \
+    --width-kind bank=410 --width-kind subtitle=440 --align right --space-px 5
+python cli.py lang-encode --text tr-exe --glyphset font-ar/glyphset.json --out tr-exe-enc \
+    --width-kind bank=410 --width-kind subtitle=440 --align right --space-px 5
+python cli.py patch --iso "$R" --out step1.iso --set chain0:font0.us=font-ar/font0.us --set chain0:font1.us=font-ar/font1.us
+python cli.py text-import --iso step1.iso --text tr-enc --out step2.iso
+python cli.py exe-import --iso step2.iso --text tr-exe-enc --out "Xenosaga Episode II (LANGTEST) (Disc 1).iso"
+python cli.py lang-preview --glyphset font-ar/glyphset.json --face font1 --kind bank --width 410 --align right \
+    --space-px 5 --text '[Canaan]ما هذا الشيء؟' --out previews/ar-sc1010-0004.png      # ... one per changed line
+python cli.py text-export --iso "…(LANGTEST)….iso" --out readback/text                # read-back
+python cli.py exe-export  --iso "…(LANGTEST)….iso" --out readback/exe
+```
+
+`--width-kind bank=410` and `--space-px 5` are the field window's measured
+values (below); the plan started from 360 and the default 9. No `--grow`
+was needed (sc1010.sbl went from 284 to 468 bytes in its 2,048-byte slot).
+
+**Tier report** (the last scan): 143 glyphs. Georgian 7 (7 single); Hindi 81
+(77 single, 4 fixed: conjuncts wider than 18 px); Amharic 10 (8 single, 2
+fixed: አ and ም, which only the menu string uses); Arabic 45 (44 A4 pairs, 1
+fixed). Single tier 92 used, 30 free; pair tier 44 used, 15 free; fixed tier
+7 used, 58 free. All three tiers are used without changing `--prefer` from
+the plan. Byte budgets: the Georgian battle names fill 5 of 5 and 3 of 3
+bytes, `ქ` landed on A3 (a section's first byte must be A1-FE), the longest
+Hindi cue line is 50 of 51 bytes, `Saving...` takes 12 of 15.
+
+**Read-back.** The finished disc was re-exported and each of the 16 changed
+strings turned into bytes and decoded through `font.Addressing` into cell
+sequences: all equal the encoder's, and every new-glyph cell is one the
+glyphset handed out (`readback.py`, 16 strings, 0 mismatches). The retail
+image's sha256 (512e728b...) was the same before and after.
+
+### The field window's width, measured on the retail disc
+
+The retail `sc1010` #0006 line, `If you touch it and press <○>, you can
+record your current progress and restore your health.`, breaks after
+`your`. With font1's metrics, `$han1;$prop1;` and `$xx1,4`, the first line
+measures 412 px without the brackets of `<○>` (437 with them), and 480 (505)
+with ` current` added. A second retail line, Canaan's tutorial in
+`sc1020`, breaks after `anything`: 340 px, and 447 with ` destructible`.
+So the window wraps lines wider than somewhere from 412 to 446 px, and 410
+is a safe pre-wrap width for right-to-left lines.
+
+The capture also shows the space: the drawn first line is 1,026 window
+pixels wide at 2.5 window pixels per screen pixel, 410 px, which matches the
+measure with a 5 px space (`$xx1,4`) and without the brackets. The string
+`$xx1,4;` at 0x69DCF0 is used from 0x281FC8, in the window's code.
+
+![Retail: the #0006 line as the game wraps it](images/ingame-xs2-retail-smsg.png)
+
+### Results, 2026-11-20, PCSX2 v2.9.175
+
+| Surface | Strings | Codes in them | Result |
+|---|---|---|---|
+| Movie subtitles (`s010100`) | 3 Hindi cues | lone 80-9F and A0-FF, AD81, AD82 | **seen**: drawn, centred per line, on time |
+| cfe event lines (`sc8001`) | 0006-0008, Hindi | lone 80-9F and A0-FF, AD80, ADC0 | **seen**: drawn and centred, the three-line 0007 too |
+| Field box, `talk.msgDtl` (`sc1010` 0004, 0005) | Arabic | A4A6-A4D1 pairs, AD85 | **seen**: joined, right to left, right edge at 410 px |
+| Field box, `talk.smsg` (`sc1010` 0006) | Arabic, two lines, `<○>` | A4 pairs | **seen**: both lines on one right edge, not re-wrapped (after the fix below) |
+| Field menu party names (`MainMenu` 0000, 0003, 0012) | Georgian | lone 81-9D, A0, A3 | **failed**: drawn blank |
+| Save screen title (`MainMenu` 0512) | Amharic | lone D9-DB, AD83, AD84 | **seen** |
+| `Saving...` (boot executable 0x68B678) | Amharic | lone D9-E0 | **seen** |
+| Battle names (`batdat.us`) | Georgian | lone, first byte A3 | **not reached** |
+
+| | |
+|---|---|
+| ![Hindi: first subtitle cue of s010100](images/ingame-xs2-hindi-movie.png) | ![Hindi: the two-line third cue](images/ingame-xs2-hindi-movie-2.png) |
+| ![Hindi: cfe line 0006](images/ingame-xs2-hindi-cfe.png) | ![Hindi: the three-line cfe line 0007](images/ingame-xs2-hindi-cfe-2.png) |
+| ![Arabic: msgDtl 0004 in the field box](images/ingame-xs2-arabic-box.png) | ![Arabic: smsg 0006, two lines](images/ingame-xs2-arabic-smsg.png) |
+| ![Amharic: the save screen's title](images/ingame-xs2-amharic-save.png) | ![Amharic: the saving message](images/ingame-xs2-amharic-saving.png) |
+| ![Georgian: the field menu, names blank](images/ingame-xs2-georgian-menu.png) | ![Hindi: cfe line 0008](images/ingame-xs2-hindi-cfe-3.png) |
+
+![Magnified: the Arabic smsg box](images/ingame-xs2-arabic-smsg-crop.png)
+
+![Magnified: the Hindi subtitle](images/ingame-xs2-hindi-movie-crop.png)
+
+![Magnified: the save screen's title and the saving message](images/ingame-xs2-amharic-save-crop.png)
+![](images/ingame-xs2-amharic-saving-crop.png)
+
+The cfe line 0008 capture comes from an earlier build of the same day whose
+fonts and `sc8001` bytes are identical to the final disc's (compared); the
+final run reached the line but the capture missed it.
+
+**The questions, answered:**
+
+1. *Do lone high bytes draw?* Yes, 0x80-0x9F and 0xA0-0xFF, in the movie
+   and in cfe lines; 0xA0-0xFF in a `.txd` menu string (the save screen's
+   title) and in an executable string. Not in the field menu's party names
+   (blank, item 5 of the table). Not tested in the field box (its Arabic used
+   pairs) and not reached in battle.
+2. *Do A4 pairs from A4A6 up and AD cells draw?* Yes: A4 pairs in the field
+   box; AD cells in the field box (AD85), movie (AD81, AD82), cfe (AD80,
+   ADC0, the last fixed code) and the save screen (AD83, AD84). A fixed cell
+   advances 19 px whatever its ink, so a narrow letter on that tier leaves a
+   gap after it (the `አ` of the save title).
+3. *Are RTL lines left alone by the window's wrap?* Yes, at 410 px, on both
+   lines of 0006.
+4. *Are subtitle and cfe lines centred?* Yes, each line on its own.
+5. *Does the battle HUD take names from `batdat.us` or `MainMenu.txd`?* Not
+   reached. After the save point the next area (`sc1020`, Canaan's
+   lock-on tutorial and a truck to shoot) came up, and about five minutes of
+   walking past it did not start a battle.
+6. *Which face does each surface use?* Not tested (no scratch build with
+   different glyphs in the two faces). The code reading above stands.
+
+### Notes from doing it
+
+* **The button tag.** The first build of the day padded 0006 for its right
+  edge counting `<` and `>` as letters, but the window draws the button
+  picture and no brackets, so the line with `<○>` came out one bracket pair
+  short of its neighbour (below). `langpack.py` now counts a `<○>`, `<△>`,
+  `<□>` or `<×>` tag as wide as its symbol; the rebuilt disc lines up.
+  ![Before the fix: line 1 ends short of line 2](images/ingame-xs2-arabic-smsg-before-fix.png)
+* **The space in the field window is 5 px.** With the default `--space-px 9`
+  an earlier build's padded lines ended at different places; `--space-px 5`
+  (`$xx1,4`) puts them on one edge.
+* **The typewriter.** The field window types a line out byte by byte from
+  the left. A right-to-left line is in visual order, so its end appears
+  first, and the padding spaces in front of it are typed too: a short pause
+  before a right-aligned line starts to show.
+* **The party names.** With 0000, 0003 and 0012 in Georgian the field menu
+  shows the Copilot and Extra name boxes empty, while Main Pilot still reads
+  `Canaan` (that box takes its name from a string this tree did not change).
+  The same lone bytes draw in movies and cfe lines and the A0-FF ones in the
+  save title, which is also a `MainMenu.txd` string, so the menu's name boxes
+  must take another path; that path has not been read.
+* **Devanagari spacing.** Without `--tight` the headline of Hindi words
+  breaks between glyphs, and a short i (ि) that the shaper puts in its own
+  cell (the cluster is wider than a cell) stands apart from its consonant
+  (`सुनियो ि जत`, `ि कए`). Readable, but not good typesetting; `--tight`
+  and smaller `--px` are the things to try next.
+* **Re-exporting a translated disc.** `text-export` marks a bank string made
+  of A4 pairs with a `#sjis:` comment line (its Shift-JIS hint reads the
+  pair bytes as half-width kana). The comment is harmless; the string
+  itself exports exactly.
+* **exe-import and a partial tree.** `exe-import` refused the two-file
+  executable tree because it opened every file the manifest lists; it now
+  leaves an executable the tree does not hold as it is (self-test added).
+* **Saving writes the memory card.** The save point opens the save screen
+  directly (memory card slot, then a slot list, then *Is this okay?*). The
+  card files were backed up before each boot and put back after; an
+  accidental cursor move once reached *Format?* on the unformatted slot 2,
+  answered No.
+
+Driving the emulator without touching the desktop: PCSX2 started with
+`open -g` and `-nogui -fastboot -batch`, pad presses posted to its PID with
+`CGEventPostToPid` (the Cioppinosaga `bg_input.py` method, 300 ms holds,
+Circle confirms), the game window captured by id with `screencapture -l`.
+PCSX2 still made itself the active app twice when its game window first
+appeared; focus was handed back to the previous app each time, and later
+boots ran a small watcher that does so at once. Start, then Triangle, skips
+a movie and a cfe event. From where the field starts, walking away from the
+camera for about three seconds reaches the save point and its three lines;
+the save point itself needs a few small steps to touch.

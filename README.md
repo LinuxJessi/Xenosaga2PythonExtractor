@@ -134,8 +134,10 @@ with a TrueType font and draws the glyphs into both fonts, `lang-encode`
 writes the tree back with the glyphs as codes (right-to-left lines
 reordered, wrapped, every byte limit checked), and `patch` (the two fonts)
 plus `text-import` put it on a copy of each disc. The room is 246 codes, 181
-of them proportional. Read from the executable and checked on disc copies,
-not yet in the running game: [docs/ALPHABETS.md](docs/ALPHABETS.md).
+of them proportional. Seen in PCSX2 on a LANGTEST disc (Arabic in the field
+box, Hindi subtitles and cutscene lines, Amharic on the save screen; the
+field menu's party names failed, battle not reached):
+[docs/ALPHABETS.md](docs/ALPHABETS.md).
 
 The few displayed strings that live in the game's code (`Saving...`, the
 memory-card and disc-change prompts, `Total Exp`) go through `exe-export` /

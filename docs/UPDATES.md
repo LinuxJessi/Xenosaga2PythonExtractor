@@ -1,5 +1,28 @@
 # Updates
 
+## 2026-11-20 (later): the LANGTEST disc, in PCSX2
+
+A copy of Disc 1 with Arabic, Hindi, Georgian and Amharic in the first
+minutes of a New Game, built with kit commands only and booted in PCSX2
+2.9.175. The worked example, captures and the build commands are in
+[ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc).
+
+* **Seen in game:** Hindi movie subtitles (`s010100`) and cfe cutscene lines
+  (`sc8001`), centred; Arabic in the field box (`sc1010` 0004-0006), joined,
+  right to left, not re-wrapped; Amharic as the save screen's title
+  (`MainMenu.txd` 0512) and in `Saving...` (an executable string). Lone bytes
+  0x80-0xFF, A4 pairs from A4A6 up and AD cells all draw.
+* **Failed:** the field menu's party names (`MainMenu.txd` 0000, 0003, 0012)
+  draw blank with lone high bytes. Not known why.
+* **Not reached:** the battle HUD (`batdat.us`). Not tested: which face each
+  surface uses, `--tight`.
+* **Measured:** the field window wraps lines wider than 412 to 446 px and its
+  space is 5 px (`$xx1,4`, also read from the code). Use
+  `--width-kind bank=410 --space-px 5` for right-to-left field text.
+* **Fixed:** `lang-encode` counts a `<○>` button tag as wide as its symbol
+  (the window draws no brackets); `exe-import` accepts a tree that holds only
+  the executables it changes. Self-tests for both.
+
 ## 2026-11-20: new alphabets (`lang-scan`, `lang-encode`, `lang-preview`)
 
 Translations into scripts the USA font never had, ported from the Episode I
@@ -22,7 +45,7 @@ addressing rewritten for Episode II. [ALPHABETS.md](ALPHABETS.md).
 * **fontTools and uharfbuzz are required** (requirements.txt), installed by
   the launchers, checked by build.py and bundled by the app.
 * Checked on disc copies (Arabic and Hindi on Disc 1, the fonts and chain 0
-  on Disc 2). Not yet seen in the running game.
+  on Disc 2), then in PCSX2 on the LANGTEST disc (next entry).
 
 ## 2026-11-20: strings in the executables (`exe-export` / `exe-import`)
 
