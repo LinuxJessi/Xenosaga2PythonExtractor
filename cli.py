@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """cli.py — Xenosaga Episode II (USA) disc extractor.
 
-Pure Python, standard library only (ffmpeg optional, for movies). Same shape
+Pure Python: the standard library plus numpy (music), fontTools and uharfbuzz
+(new alphabets), all in requirements.txt; ffmpeg optional, for movies. Same shape
 as the Episode I kit: a reading stack (iso9660 -> chains -> toc -> arx), a
 ``browse`` step that converts, and a write path (``repack.py``).
 
@@ -18,6 +19,9 @@ Usage:
     python cli.py font-extract --iso DISC.iso --out FONTDIR
     python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
+    python cli.py lang-scan   --iso DISC.iso --text TR --font F.ttf --script Arab --rtl --out FONTS
+    python cli.py lang-encode --text TR --glyphset FONTS/glyphset.json --out TR-ENC [--width-kind bank=360]
+    python cli.py lang-preview --glyphset FONTS/glyphset.json --text "..." --out line.png
     python cli.py recolor --iso DISC.iso --out PINK.iso [--preset kosmos-hair] [--hue 0.92]
     python cli.py self-test
 
@@ -388,9 +392,28 @@ def cmd_font_rebuild(args) -> int:
         return 1
 
 
+def cmd_lang_scan(args) -> int:
+    import langpack
+
+    return langpack.run("scan", args)
+
+
+def cmd_lang_encode(args) -> int:
+    import langpack
+
+    return langpack.run("encode", args)
+
+
+def cmd_lang_preview(args) -> int:
+    import langpack
+
+    return langpack.run("preview", args)
+
+
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
-              "minidisc", "moviesub", "textcodec", "textpack", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
+              "minidisc", "moviesub", "textcodec", "textpack", "glyphs", "langpack",
+              "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
 
 
 def cmd_self_test(args) -> int:
@@ -406,7 +429,11 @@ def cmd_self_test(args) -> int:
             rc |= 1
             continue
         print(f"--- {name}")
-        rc |= mod.self_test() or 0
+        try:
+            rc |= mod.self_test() or 0
+        except Exception as e:              # a crash is a failure, and the other modules still run
+            print(f"FAIL  {name}: the self-test stopped with {type(e).__name__}: {e}")
+            rc |= 1
     return rc
 
 
@@ -520,6 +547,21 @@ def main(argv=None) -> int:
     p.add_argument("--relocate", action="store_true",
                    help="append every --set object at the end of the image even if it fits (tests relocation)")
     p.set_defaults(func=cmd_patch)
+
+    import langpack
+    p = sub.add_parser("lang-scan", help="shape a translated tree in a new alphabet and draw its glyphs into "
+                       "font0.us and font1.us (USA)")
+    langpack.add_scan_args(p)
+    p.set_defaults(func=cmd_lang_scan)
+
+    p = sub.add_parser("lang-encode", help="turn a translated tree into the same tree with the new glyphs as "
+                       "codes, ordered, wrapped and size-checked")
+    langpack.add_encode_args(p)
+    p.set_defaults(func=cmd_lang_encode)
+
+    p = sub.add_parser("lang-preview", help="draw one line with the rebuilt font to a PNG")
+    langpack.add_preview_args(p)
+    p.set_defaults(func=cmd_lang_preview)
 
     p = sub.add_parser("self-test", help="run every module's self-test")
     p.set_defaults(func=cmd_self_test)

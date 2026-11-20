@@ -57,14 +57,26 @@ BINARIES = [(str(FFMPEG), "tools")] if FFMPEG.exists() else []
 # command functions; listing them all keeps a release complete).
 HIDDEN = sorted(p.stem for p in REPO.glob("*.py") if p.stem not in ("gui", "cli", "build"))
 
+# The required packages (requirements.txt). numpy is found through the kit's
+# imports; fontTools and uharfbuzz are imported lazily by glyphs.py, so they are
+# collected whole: fontTools loads its table modules by name at run time, and
+# uharfbuzz is a compiled extension.
+from PyInstaller.utils.hooks import collect_all
+EXTRA_DATAS, EXTRA_BINARIES, EXTRA_HIDDEN = [], [], []
+for _pkg in ("fontTools", "uharfbuzz"):
+    _d, _b, _h = collect_all(_pkg)
+    EXTRA_DATAS += _d
+    EXTRA_BINARIES += _b
+    EXTRA_HIDDEN += _h
+
 
 def _analysis(entry):
     return Analysis(
         [str(REPO / entry)],
         pathex=[str(REPO)],
-        binaries=BINARIES,
-        datas=DATAS,
-        hiddenimports=HIDDEN + ["cli"],
+        binaries=BINARIES + EXTRA_BINARIES,
+        datas=DATAS + EXTRA_DATAS,
+        hiddenimports=HIDDEN + ["cli", "numpy", "fontTools", "uharfbuzz"] + EXTRA_HIDDEN,
         hookspath=[],
         runtime_hooks=[],
         excludes=["tkinter", "test", "unittest"],
