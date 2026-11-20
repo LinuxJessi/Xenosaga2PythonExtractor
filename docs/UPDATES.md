@@ -24,6 +24,23 @@ addressing rewritten for Episode II. [ALPHABETS.md](ALPHABETS.md).
 * Checked on disc copies (Arabic and Hindi on Disc 1, the fonts and chain 0
   on Disc 2). Not yet seen in the running game.
 
+## 2026-11-20: strings in the executables (`exe-export` / `exe-import`)
+
+* **`exetext.py`**, borrowed from the Episode I kit's `ovltext.py`: every
+  string the code of the boot executable, `OV01.OVL` and `OV02.OVL` points
+  at (pointer words, `lui` pairs, `$gp` addresses), as a block tree with each
+  string's slot (`### @0x0068b678 max 15 bytes` for `Saving...`). Written
+  back in place only, the rest of the slot zero-filled, nothing moved.
+* `exe-import` must be the last step: afterwards the executable is not the
+  retail one and `text-import`, `font-extract` and `lang-scan` refuse the
+  image. `--retail` starts again from the retail executables for a second
+  round.
+* The boot executable carries the title overlay's bytes as a third segment
+  (equal to `OV02.OVL`); strings there are listed in both trees and must be
+  edited alike.
+* `repack.patch_copy` takes `fs_replacements` (plain ISO files, same size).
+  Not yet seen in the running game. [MODDING.md](MODDING.md).
+
 ## 2026-11-10 (later): fixes from the translation review
 
 Four outside models reviewed the text work; every point and what was done is
