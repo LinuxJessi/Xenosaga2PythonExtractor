@@ -41,7 +41,7 @@ The Episode I kit's rules, kept (the first one with three packages added):
                             │                         spu2synth.py                  the PS2's music render
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
-                            ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py
+                            ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py, exetext.py
                             ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
                             └─ patch / recolor ─► repack.py, recolor.py
 ```

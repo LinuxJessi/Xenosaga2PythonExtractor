@@ -144,7 +144,8 @@ memory-card and disc-change prompts, `Total Exp`) go through `exe-export` /
 `exe-import`: each is rewritten in place, at most the `max N` bytes its
 header gives. Run `exe-import` last: afterwards the executable is no longer
 the retail one and the other text commands refuse the image; `--retail`
-redoes an image that was exe-patched before.
+redoes an image that was exe-patched before. In a new alphabet they go
+through `lang-scan` and `lang-encode` like the rest of the text.
 
 ## How it is built
 

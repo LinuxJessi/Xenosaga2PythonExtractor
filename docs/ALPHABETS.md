@@ -122,9 +122,16 @@ every such character it finds in the scanned trees (the list shows them as
 its mirror too, since a right-to-left line writes one as the other. Bodies
 the encoder leaves alone are counted only when the retail reserve would count
 them: text-export shows the EUC-JP developer lines as Latin-1 (for example
-`Í½È÷£±` in batdat.us), and those are not reserved. `lang-encode` refuses a
-typed character whose cell holds a glyph of the glyphset (scan again), and
-writes nothing.
+`Í½È÷£±` in batdat.us), and those are not reserved. An executable string
+(`*.exe.txt`) without the new script is left out while it still holds its
+retail bytes: `exe-export` lists data and developer strings whose bytes read
+as Latin-1 (`□¡§£Ä£ï£ì£â£ù...` is the EUC-JP of a fullwidth "Dolby", others
+are pointers or a JPEG marker), the retail reserve does not read the
+executables either, and `exe-import` writes only the strings that changed.
+`lang-scan` reads the retail strings from its `--iso`; `lang-encode` does
+when given `--iso`, and without it says how many such strings it did not
+check. `lang-encode` refuses a typed character whose cell holds a glyph of
+the glyphset (scan again), and writes nothing.
 
 A4 trails E1-FF reach the same cells as the single bytes 80-9E; the kit
 allocates cells and writes each with its cheapest code (the single byte).
@@ -177,7 +184,11 @@ python cli.py patch --iso "Disc 2.iso" --out fonts2.iso \
     --set 'chain0:font0.us=fonts/font0.us' --set 'chain0:font1.us=fonts/font1.us'
 python cli.py text-import --iso fonts2.iso --text tr-enc/ --out final2.iso
 
-# 5. executable strings last (exe-import, a sibling work item)
+# 5. executable strings last: export, translate, encode (--iso: exe-import's
+#    checks as a dry run), then exe-import onto the image with fonts and text
+python cli.py exe-export --iso "Disc 1.iso" --out exe/
+python cli.py lang-encode --text exe/ --glyphset fonts/glyphset.json --out exe-enc/ --iso "Disc 1.iso"
+python cli.py exe-import --iso final1.iso --text exe-enc/ --out final1-exe.iso
 ```
 
 `text-import` goes onto the copy with the new fonts because its subtitle
@@ -186,7 +197,8 @@ last: a patched executable no longer matches the sha256 that text-import,
 font-extract and lang-scan check, so those commands refuse that disc.
 
 `lang-encode --iso fonts1.iso` runs `text-import`'s checks on the encoded
-tree as a dry run.
+tree as a dry run; for an executable tree (`xs2-exe-export.json`) it runs
+`exe-import`'s checks instead.
 
 ## lang-scan
 
@@ -296,7 +308,7 @@ Per kind:
 | `yosikawa\*.txd.txt` (menus) | block bodies | text-import: the file may not need more sectors |
 | `movie\en\*.sub.txt` (subtitles) | only the text after `time<TAB>` on cue lines; the frame-0 cue and `;` lines untouched | text-import: the disc's retail line bytes (51 Disc 1, 49 Disc 2) and pixels (454 / 445), the cue list, the 64-byte packing rule (s010100 has 2 bytes of room) |
 | `yamamoto\batdat.us.txt` (battle) | block bodies | `max N bytes` per string; a section's first string starts with a byte 20-7E or A1-FE |
-| `*.exe.txt` (executable strings, sibling work item) | block bodies, `⟦0A⟧` breaks | `max N bytes` per string |
+| `*.exe.txt` (executable strings, `exe-export`) | block bodies, `⟦0A⟧` breaks | `max N bytes` per string |
 | `iwase\*.sjis.txt` (quest) | nothing: Shift-JIS, no new glyphs | refused if it holds a character Shift-JIS cannot write |
 
 If any glyph has no slot, any character belongs to no scanned script and is
@@ -396,7 +408,7 @@ python cli.py lang-scan --iso "$R" --text tr --font $F/SFArabic.ttf --script Ara
 python cli.py lang-encode --text tr --glyphset font-ar/glyphset.json --out tr-enc \
     --width-kind bank=410 --width-kind subtitle=440 --align right --space-px 5
 python cli.py lang-encode --text tr-exe --glyphset font-ar/glyphset.json --out tr-exe-enc \
-    --width-kind bank=410 --width-kind subtitle=440 --align right --space-px 5
+    --width-kind bank=410 --width-kind subtitle=440 --align right --space-px 5 --iso "$R"
 python cli.py patch --iso "$R" --out step1.iso --set chain0:font0.us=font-ar/font0.us --set chain0:font1.us=font-ar/font1.us
 python cli.py text-import --iso step1.iso --text tr-enc --out step2.iso
 python cli.py exe-import --iso step2.iso --text tr-exe-enc --out "Xenosaga Episode II (LANGTEST) (Disc 1).iso"
@@ -408,7 +420,7 @@ python cli.py exe-export  --iso "…(LANGTEST)….iso" --out readback/exe
 
 `--width-kind bank=410` and `--space-px 5` are the field window's measured
 values (below); the plan started from 360 and the default 9. No `--grow`
-was needed (sc1010.sbl went from 284 to 468 bytes in its 2,048-byte slot).
+was needed (sc1010.sbl went from 284 to 472 bytes in its 2,048-byte slot).
 
 **Tier report** (the last scan): 144 glyphs. Georgian 7 (7 single); Hindi 82
 (78 single, 4 fixed: conjuncts wider than 18 px); Amharic 10 (8 single, 2
@@ -418,7 +430,9 @@ Single tier 93 used, 29 free; pair tier 44 used, 15 free; fixed tier 7
 used, 58 free. All three tiers are used without changing `--prefer` from
 the plan. Byte budgets: the Georgian battle names fill 5 of 5 and 3 of 3
 bytes, `ქ` landed on A3 (a section's first byte must be A1-FE), the longest
-Hindi cue line is 49 of 51 bytes, `Saving...` takes 12 of 15.
+Hindi subtitle line is 30 of 51 bytes (the 51 is per line; the whole
+00:19:14 cue, two lines and the `\n`, is 49 bytes), `Saving...` takes 12 of
+15.
 
 These numbers are from the rebuild after the review fixes (below). The
 first build, also booted, had Hindi at 18 px (81 glyphs, the u-sign of सु
@@ -430,6 +444,38 @@ strings turned into bytes and decoded through `font.Addressing` into cell
 sequences: all equal the encoder's, and every new-glyph cell is one the
 glyphset handed out (`readback.py`, 16 strings, 0 mismatches). The retail
 image's sha256 (512e728b...) was the same before and after.
+
+**Rebuilt from the merged kit.** After the three work items (the alphabets,
+the executable strings, this test) were merged on one branch, the disc was
+built again from a fresh export of the retail Disc 1, with the commands
+above and nothing else, by one shell script that also writes the
+translations into the exported tree (each block must still hold the retail
+English it replaces) and checks the result. The first run stopped at the
+Amharic scan: the typed-character check, added to `lang-scan` after this
+test's first build, took the untouched developer strings of `BOOT.exe.txt`
+(`£`, `§`, `Ä`, `Ø`, a no-break space) for typed text and refused the
+cells Georgian and Hindi already held. Untouched executable strings are now
+compared with the retail ones (above) and the build goes through. The
+checks on the finished image:
+
+* the 16 changed strings re-export as the encoder wrote them, byte for byte;
+  every cell they reach is a glyphset cell or an unchanged retail one (the
+  `<○>` button, A1FB);
+* every other string is unchanged: 12,778 untouched strings in 495 text
+  files and 4,149 in the three executable trees compared with the retail
+  export;
+* font0.us and font1.us on the disc equal the scanned files; they differ
+  from retail in 281 cells and 137 metric pairs, all of them the 144 slots'
+  cells, their +576 images and their pairs, and both faces got the same
+  cells;
+* the tiers per surface: single bytes in the movie subtitles, the cfe
+  lines, the battle names and `Saving...` (plus fixed cells in the Hindi
+  conjuncts); A4 pairs in the `talk.msgDtl` box and the `talk.smsg` window
+  (0004 also has the AD85 fixed cell); AD fixed cells in the menu (0512).
+
+The image came out byte-identical to the rebuild booted above (sha256
+5a309d13...), so what the captures of the rebuild show is what these bytes
+draw. The merged build itself has not been booted again.
 
 ### The field window's width, measured on the retail disc
 

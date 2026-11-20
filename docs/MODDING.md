@@ -380,6 +380,11 @@ behind and the twin check still compares against retail text (both cases
 are in the self-test). Only the USA build is supported; Japan and the demo
 are refused.
 
+**In a new alphabet.** The executable tree goes through `lang-scan` (as a
+second `--text`) and `lang-encode` like the text tree; give `lang-encode`
+the disc as `--iso` so it runs these checks as a dry run and tells the
+untouched strings from typed text ([ALPHABETS.md](ALPHABETS.md)).
+
 Seen in the running game: the edited `Saving...` string (boot executable
 0x68B678, in Amharic) on the LANGTEST disc in PCSX2, 2026-11-20
 ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)). That its

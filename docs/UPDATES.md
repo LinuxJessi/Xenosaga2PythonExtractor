@@ -1,5 +1,27 @@
 # Updates
 
+## 2026-11-20 (evening): the language suite on one branch
+
+The alphabets (`lang-scan`, `lang-encode`, `lang-preview`), the executable
+strings (`exe-export`, `exe-import`) and the LANGTEST fixes merged on the
+`langsuite` branch; `cli.py self-test` and `gui.py --self-test` pass, and
+the five commands have GUI cards.
+
+* **Fixed:** with both merged, `lang-scan` refused an executable tree: the
+  typed-character check took untouched developer and data strings that
+  `exe-export` lists (`£`, `§`, `Ä`, `Ø`, a no-break space, read from
+  EUC-JP fullwidth letters and pointers) for typed text. An executable
+  string without the new script is now compared with the disc's own and
+  left out while it still holds its retail bytes (`lang-scan` always,
+  `lang-encode` with `--iso`). Self-test.
+* `lang-encode --iso` on an executable tree runs `exe-import`'s checks as
+  its dry run (it ran `text-import`'s, which need the text manifest).
+* The LANGTEST disc was built again from a fresh retail export with kit
+  commands only. Its strings, fonts and untouched text were checked on the
+  image, and it is byte-identical to the rebuild booted earlier the same day.
+  This build was not booted again
+  ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)).
+
 ## 2026-11-20 (later): the LANGTEST disc, in PCSX2
 
 A copy of Disc 1 with Arabic, Hindi, Georgian and Amharic in the first
