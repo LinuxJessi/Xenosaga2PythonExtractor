@@ -15,6 +15,8 @@ Usage:
     python cli.py text-export --iso DISC.iso --out TEXTDIR
     python cli.py dialogue --iso DISC1.iso [--iso DISC2.iso] --out DIR [--voice]
     python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso [--grow] [--rebase]
+    python cli.py exe-export --iso DISC.iso --out EXEDIR
+    python cli.py exe-import --iso DISC.iso --text EXEDIR --out MODDED.iso [--retail RETAIL.iso]   (run last)
     python cli.py font-extract --iso DISC.iso --out FONTDIR
     python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
@@ -328,6 +330,18 @@ def cmd_text_import(args) -> int:
     return import_text(args.iso, args.text, args.out, grow=args.grow, rebase=args.rebase)
 
 
+def cmd_exe_export(args) -> int:
+    import exetext
+
+    return exetext.export(args.iso, args.out)
+
+
+def cmd_exe_import(args) -> int:
+    import exetext
+
+    return exetext.import_(args.iso, args.text, args.out, retail_iso=args.retail)
+
+
 def cmd_dialogue(args) -> int:
     import dialogue
 
@@ -390,7 +404,7 @@ def cmd_font_rebuild(args) -> int:
 
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
-              "minidisc", "moviesub", "textcodec", "textpack", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
+              "minidisc", "moviesub", "textcodec", "textpack", "exetext", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
 
 
 def cmd_self_test(args) -> int:
@@ -496,6 +510,19 @@ def main(argv=None) -> int:
                    help="apply the text to this disc even though it is not the one it was exported from "
                         "(another revision, or an image that is already patched); the manifest check is skipped")
     p.set_defaults(func=cmd_text_import)
+
+    p = sub.add_parser("exe-export", help="the strings in the executables (boot ELF, OV01, OV02) to an editable tree")
+    p.add_argument("--iso", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_exe_export)
+
+    p = sub.add_parser("exe-import", help="write edited executable strings in place into a copy of the disc (run last)")
+    p.add_argument("--iso", required=True)
+    p.add_argument("--text", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--retail", help="the retail disc image: start from its executables, so an image that was "
+                                    "exe-patched before can be done again")
+    p.set_defaults(func=cmd_exe_import)
 
     p = sub.add_parser("font-extract", help="the fonts as PNG sheets + metrics CSV + the byte-to-cell table")
     p.add_argument("--iso", required=True)
