@@ -39,6 +39,7 @@ The Episode I kit's rules, kept (the first one with numpy added):
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
                             ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
+                            ├─ text-coverage ─► coverage.py ─► textpack.py, exetext.py
                             └─ patch / recolor ─► repack.py, recolor.py
 ```
 
@@ -60,7 +61,8 @@ The Episode I kit's rules, kept (the first one with numpy added):
 | `sbl.py` | script text banks: parse, rebuild, edit |
 | `sb.py` | the script machine: parse, disassemble, check ([SCRIPTS.md](SCRIPTS.md)) |
 | `textpack.py` | dialogue as an editable UTF-8 tree, and back onto a disc copy |
-| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree; written back in place (from the Episode I kit's `ovltext.py`) |
+| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree, read with the print function's control-code grammar; written back in place (from the Episode I kit's `ovltext.py`) |
+| `coverage.py` | every place the game shows text, counted from the disc, with what the kit does with it; `--verify` round-trips the unedited trees |
 | `vsf.py` | KORG sample banks to WAV |
 | `prj.py` | KORG projects: keys, programs, SoundFont 2 ([MUSIC.md](MUSIC.md)) |
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |
