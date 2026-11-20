@@ -836,6 +836,11 @@ def add_to_glb(glb_bytes, x, sources):
                                 shear=shear))
     if not anims:
         return glb_bytes, summary
+    # every transform a joint of the skin (after the mesh's own joints), so
+    # an importer makes a bone of each one the motion keys
+    for si, skin in enumerate(js.get("skins", ())):
+        if skin.get("skeleton") == sk[0]:
+            glb_bytes = gltf.extend_skin(glb_bytes, si, node_of)
     return gltf.append_animations(glb_bytes, anims), summary
 
 
@@ -1361,6 +1366,12 @@ def self_test():
     assert counts[("t09", "rotation")] == 1             # run F: constant
     assert counts[("t03", "scale")] == 1
     assert len(an["channels"]) == 3 * len(x.joints)
+    skin_joints = set(js["skins"][0]["joints"])
+    assert all(node_of[j.name] in skin_joints for j in x.joints)
+    for i, nd in enumerate(js["nodes"]):          # the rest pose is untouched
+        if "skin" in nd:
+            for static, skinned in gltf.skinned_positions(js, binc, i):
+                assert np.abs(static - skinned).max() < 1e-5
     face_an = js["animations"][3]
     assert {js["nodes"][c["target"]["node"]]["name"]
             for c in face_an["channels"]} == {"t06"}

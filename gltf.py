@@ -7,7 +7,8 @@ lifted from the Xenosaga Episode I kit, `Xenosaga1PythonExtractor/lex.py`
 (`to_glb`, `_matmul`, `_invert_rigid`, `_quat_from_matrix`; same author,
 MIT), 2026-11-10.  There they were welded to the `.lex` structures; here
 they take plain numpy arrays, so any mesh decoder can use them.
-The animation part (`append_animations`, `sample_animation`, `validate`
+The animation part (`append_animations`, `sample_animation`, `validate`,
+`extend_skin`
 and the node overrides of `node_world_matrices` / `skinned_positions`) is
 new in this kit, not lifted, 2026-11-20.
 
@@ -33,6 +34,7 @@ import numpy as np
 __all__ = ["GlbBuilder", "read_glb", "pack_glb", "accessor_array", "matmul",
            "invert_rigid", "quat_from_matrix", "trs_from_matrix",
            "node_world_matrices", "skinned_positions", "append_animations",
+           "extend_skin",
            "sample_animation", "validate", "self_test"]
 
 FLOAT, USHORT, UINT, UBYTE = 5126, 5123, 5125, 5121
@@ -420,6 +422,49 @@ def pack_glb(js, binc):
 _PATH_TYPE = {"translation": "VEC3", "rotation": "VEC4", "scale": "VEC3"}
 
 
+def extend_skin(glb_bytes, skin_index, nodes):
+    """Add `nodes` to a skin's joint list (after the existing joints, so
+    vertex joint indices keep their meaning), each with the inverse of its
+    rest world matrix as inverse bind matrix.  No vertex refers to them;
+    importers such as Blender then make a bone of every one.  The rewritten
+    list has every matrix's last row exactly (0, 0, 0, 1), as glTF asks
+    (an inverse computed in floating point can leave 1e-17 there)."""
+    js, binc = read_glb(glb_bytes)
+    skin = js["skins"][skin_index]
+    nodes = [n for n in nodes if n not in skin["joints"]]
+    if not nodes:
+        return glb_bytes
+    world = node_world_matrices(js)
+    old = accessor_array(js, binc, skin["inverseBindMatrices"]).reshape(
+        -1, 4, 4).astype(np.float64)                 # column-major storage
+    new = np.stack([np.linalg.inv(world[n]) for n in nodes])
+    new[:, 3, :] = (0.0, 0.0, 0.0, 1.0)     # exactly affine (glTF requires it)
+    new = new.transpose(0, 2, 1)
+    ibm = np.concatenate([old, new])
+    ibm[:, :3, 3] = 0.0                      # stored transposed: the last
+    ibm[:, 3, 3] = 1.0                       # row of every matrix, exactly
+    ibm = ibm.astype("<f4")
+    binc = bytearray(binc)
+    while len(binc) % 4:
+        binc.append(0)
+    # the skin's accessor and its buffer view now cover the longer list,
+    # appended to the buffer (the old bytes stay, unreferenced)
+    acc = js["accessors"][skin["inverseBindMatrices"]]
+    view = {"buffer": 0, "byteOffset": len(binc), "byteLength": ibm.nbytes}
+    shared = sum(a.get("bufferView") == acc["bufferView"]
+                 for a in js["accessors"]) > 1
+    if shared:
+        js["bufferViews"].append(view)
+        acc["bufferView"] = len(js["bufferViews"]) - 1
+    else:
+        js["bufferViews"][acc["bufferView"]] = view
+    binc.extend(ibm.tobytes())
+    acc.pop("byteOffset", None)
+    acc["count"] = len(ibm)
+    skin["joints"] = list(skin["joints"]) + list(nodes)
+    return pack_glb(js, binc)
+
+
 def append_animations(glb_bytes, animations):
     """Append animations to a .glb and return the new bytes.
 
@@ -697,6 +742,22 @@ def self_test():
     sk = skinned_positions(js2, binc2, mn, ov)[0][1]
     want3 = (w[n1] @ np.linalg.inv(j1) @ [0, 2, 0, 1.0])[:3]  # vertex 3 on j1
     assert np.abs(sk[3] - want3).max() < 1e-6
+    # a node added to the skin keeps every vertex where it was
+    n_extra = len(js2["nodes"])
+    js3 = json.loads(json.dumps(js2))
+    js3["nodes"].append({"name": "extra", "translation": [0, 0, 3.0]})
+    js3["nodes"][n1].setdefault("children", []).append(n_extra)
+    blob3 = extend_skin(pack_glb(js3, binc2), 0, [n_extra, n1])
+    js3, binc3 = read_glb(blob3)
+    assert js3["skins"][0]["joints"] == [n0, n1, n_extra]
+    assert validate(js3, binc3) == []
+    p3 = skinned_positions(js3, binc3, mn)[0]
+    assert np.abs(p3[0] - p3[1]).max() < 1e-6
+    ib = accessor_array(js3, binc3, js3["skins"][0]["inverseBindMatrices"])
+    w3 = node_world_matrices(js3)
+    assert np.abs(ib.reshape(-1, 4, 4)[2].T @ w3[n_extra] - np.eye(4)).max() \
+        < 1e-6
+    assert np.all(ib.reshape(-1, 4, 4)[2][:, 3] == (0, 0, 0, 1))
     # damage is reported
     bad = json.loads(json.dumps(js2))
     smp = bad["animations"][0]["samplers"][0]
