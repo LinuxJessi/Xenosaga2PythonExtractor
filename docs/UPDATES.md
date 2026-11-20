@@ -9,15 +9,17 @@ minutes of a New Game, built with kit commands only and booted in PCSX2
 
 * **Seen in game:** Hindi movie subtitles (`s010100`) and cfe cutscene lines
   (`sc8001`), centred; Arabic in the field box (`sc1010` 0004-0006), joined,
-  right to left, not re-wrapped, except that one ligature (AD85, in الشيء)
-  was wider than its cell and cut off; Amharic as the save screen's title
+  right to left, not re-wrapped (on the first build one ligature, AD85 in
+  الشيء, was wider than its cell and cut off; the rebuild draws it whole);
+  Amharic as the save screen's title
   (`MainMenu.txd` 0512) and in `Saving...` (an executable string). Lone bytes
-  0x80-0xFF in the movie and cfe lines (font0), D9-E0 in the menu and
-  executable strings, A4 pairs from A4A6 up and AD cells draw.
+  0x80-0xFF in the movie and cfe lines (font0) and the field window
+  (font1), D9-E0 in the menu and executable strings, A4 pairs from A4A6 up
+  and AD cells draw.
 * **Failed:** the field menu's party names (`MainMenu.txd` 0000, 0003, 0012)
-  draw blank. Not known why, and not known whether the name boxes or the
-  codes are at fault: the Georgian codes (81 8D 8F 90 9D A0 A3, six of them
-  the retail placeholder-dot cells) were used in no other string.
+  draw blank. A scratch build put the same Georgian codes in a field-window
+  line (drawn) and Hindi on codes the movie draws in a name (blank), so the
+  name boxes are at fault, not the codes. Why is not known.
 * **Not reached:** the battle HUD (`batdat.us`). Not tested: which face each
   surface uses, `--tight`.
 * **Measured:** the field window wraps lines wider than 412 to 446 px and its
@@ -32,8 +34,7 @@ minutes of a New Game, built with kit commands only and booted in PCSX2
   `lang-encode` writes `&NN` and `<○>` verbatim inside right-to-left lines
   (`&12` came out as `21&`); `exe-import --retail` resets an executable the
   tree leaves out to retail, so a second round equals a fresh import. Each
-  with a self-test. The disc was rebuilt with these; the rebuilt disc has
-  not been booted, and the captures are of the build before.
+  with a self-test. The disc was rebuilt with these and booted again.
 
 ## 2026-11-20: new alphabets (`lang-scan`, `lang-encode`, `lang-preview`)
 

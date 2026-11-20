@@ -32,26 +32,24 @@ fonts and chain 0 text.
 **Seen in the running game** (PCSX2 2.9.175, the LANGTEST disc, 2026-11-20;
 the worked example at the end of this page): lone bytes 0x80-0x9F and
 0xA0-0xFF in movie subtitles and cfe cutscene lines (both drawn with
-font0), lone bytes D9-E0 in the save screen's title (a `.txd` menu string)
+font0) and in the field message window (font1, a scratch build), lone bytes D9-E0 in the save screen's title (a `.txd` menu string)
 and in an executable string (`Saving...`), A4 pairs from A4A6 up in the
 field message window, and AD cells in the field window, movie subtitles,
 cfe lines and the save screen's title. Right-to-left lines pre-wrapped at
 410 px are left alone by the field window; subtitle and cfe lines are
-centred per line. One glyph was drawn wrong: a ligature wider than its cell
-was cut off (fixed in the kit since; see the worked example).
+centred per line. On the first build one ligature wider than its cell was
+cut off; the kit now draws such a glyph narrower, and the rebuild shows it
+whole (see the worked example).
 
 **Failed in the running game:** the party names of the field menu
-(`MainMenu.txd` blocks 0000, 0003, 0012 in Georgian) are drawn blank. Why is
-not known, and the test does not tell whether the menu's name boxes or the
-codes are at fault: the Georgian strings use the lone codes 81 8D 8F 90 9D
-A0 A3, and no string seen in the game used any of them. Six of the seven
-(81 8D 8F 90 9D A0) are the retail font's placeholder-dot cells, which the
-allocator hands out first.
+(`MainMenu.txd` blocks 0000, 0003, 0012) are drawn blank. A scratch build
+showed that the name boxes are at fault, not the codes: the Georgian codes
+draw in the field window, and Hindi on codes the movie draws is blank in
+the name box too. Why the name boxes draw nothing has not been read.
 
 **Not reached or not tested:** the battle HUD (`batdat.us`, and whether it
-takes names from `batdat.us` or `MainMenu.txd`), lone bytes 0x80-0x9F in
-any font1 surface (field window, menu, battle), the codes 81 8D 8F 90 9D
-A0 A3 anywhere, `--tight`, and which face each surface uses (both faces
+takes names from `batdat.us` or `MainMenu.txd`), `--tight`, and which face
+each surface uses (both faces
 carry every glyph, so the captures do not tell them apart). Everything else
 about how the engine draws is read from the executable.
 
@@ -371,7 +369,7 @@ with `### @0x0068b678 max 15 bytes` `Saving...` → `በማስቀመጥ ላይ..
 ### The commands
 
 Every command and its output went into `build.log`; the disc builds from
-them alone (about 90 seconds). Fonts from `/System/Library/Fonts`.
+them alone (about two minutes). Fonts from `/System/Library/Fonts`.
 
 ```sh
 R="…(USA) (Disc 1).iso"; F=/System/Library/Fonts
@@ -410,10 +408,9 @@ bytes, `ქ` landed on A3 (a section's first byte must be A1-FE), the longest
 Hindi cue line is 49 of 51 bytes, `Saving...` takes 12 of 15.
 
 These numbers are from the rebuild after the review fixes (below). The
-disc that was booted and captured was the build before them: Hindi at
-18 px (81 glyphs, the u-sign of सु and फु cut by a fraction of a row at the
-bottom of the cell), and AD85 at full width, cut at the cell's edge. The
-rebuilt disc has not been booted.
+first build, also booted, had Hindi at 18 px (81 glyphs, the u-sign of सु
+and फु cut by a fraction of a row at the bottom of the cell) and AD85 at
+full width, cut at the cell's edge.
 
 **Read-back.** The finished disc was re-exported and each of the 16 changed
 strings turned into bytes and decoded through `font.Addressing` into cell
@@ -441,15 +438,25 @@ measure with a 5 px space (`$xx1,4`) and without the brackets. The string
 
 ### Results, 2026-11-20, PCSX2 v2.9.175
 
+The disc was booted twice: the first build, then the rebuild after the
+review fixes (the commands above). The captures are of the rebuild, except
+the Amharic save screen and `Saving...` (first build; the rebuild draws the
+same Amharic bitmaps, on codes one cell further on, and was not saved
+with) and the magnified smsg box (first build; 0006 has no glyph that
+changed). Two more boots answered the party-name question: a scratch build
+and the retail disc (below).
+
 | Surface | Strings | Codes in them | Result |
 |---|---|---|---|
-| Movie subtitles (`s010100`) | 3 Hindi cues | lone 80-9F and A0-FF, AD81, AD82 | **seen**: drawn, centred per line, on time |
-| cfe event lines (`sc8001`) | 0006-0008, Hindi | lone 80-9F and A0-FF, AD80, ADC0 | **seen**: drawn and centred, the three-line 0007 too |
-| Field box, `talk.msgDtl` (`sc1010` 0004, 0005) | Arabic | A4A6-A4D1 pairs, AD85 | **seen, one word malformed**: joined, right to left, right edge at 410 px; but AD85 (the sheen+yeh final ligature of الشيء in 0004) was cut off at column 20, so the word reads like الثيء with no join (kit fixed, rebuilt disc not booted) |
+| Movie subtitles (`s010100`) | 3 Hindi cues | lone 80-9F and A0-FF, AD80, AD82 | **seen**: drawn, centred per line, on time |
+| cfe event lines (`sc8001`) | 0006-0008, Hindi | lone 80-9F and A0-FF, AD80, AD81, ADC0 | **seen**: drawn and centred, the three-line 0007 too |
+| Field box, `talk.msgDtl` (`sc1010` 0004, 0005) | Arabic | A4A6-A4D1 pairs, AD85 | **seen**: joined, right to left, right edge at 410 px. On the first build AD85 (the sheen+yeh final ligature of الشيء in 0004) was cut off at column 20 and the word read like الثيء; the rebuild draws it whole |
 | Field box, `talk.smsg` (`sc1010` 0006) | Arabic, two lines, `<○>` | A4 pairs | **seen**: both lines on one right edge, not re-wrapped (after the fix below) |
-| Field menu party names (`MainMenu` 0000, 0003, 0012) | Georgian | lone 81 8D 8F 90 9D A0 A3 (used nowhere else) | **failed**: drawn blank; whether the surface or these codes fail is not known |
-| Save screen title (`MainMenu` 0512) | Amharic | lone D9-DB, AD83, AD84 | **seen** |
-| `Saving...` (boot executable 0x68B678) | Amharic | lone D9-E0 | **seen** |
+| Field menu party names (`MainMenu` 0000, 0003, 0012) | Georgian | lone 81 8D 8F 90 9D A0 A3 | **failed**: drawn blank, on both builds. The scratch test shows the name boxes are at fault, not these codes |
+| Field box, scratch build (`sc1010` 0005) | Georgian | the same lone 81 8D 8F 90 9D A0 A3 | **seen**: all drawn |
+| Field menu, scratch build (`MainMenu` 0000) | Hindi हिंसा | lone B1 B2 (both drawn in the movie) | **failed**: Copilot box blank |
+| Save screen title (`MainMenu` 0512) | Amharic | lone D9-DB, AD83, AD84 | **seen** (first build) |
+| `Saving...` (boot executable 0x68B678) | Amharic | lone D9-E0 | **seen** (first build) |
 | Battle names (`batdat.us`) | Georgian | lone, first byte A3 | **not reached** |
 
 | | |
@@ -460,6 +467,8 @@ measure with a 5 px space (`$xx1,4`) and without the brackets. The string
 | ![Amharic: the save screen's title](images/ingame-xs2-amharic-save.png) | ![Amharic: the saving message](images/ingame-xs2-amharic-saving.png) |
 | ![Georgian: the field menu, names blank](images/ingame-xs2-georgian-menu.png) | ![Hindi: cfe line 0008](images/ingame-xs2-hindi-cfe-3.png) |
 
+![Magnified: the Arabic box, 0004, the rebuild](images/ingame-xs2-arabic-box-crop.png)
+
 ![Magnified: the Arabic smsg box](images/ingame-xs2-arabic-smsg-crop.png)
 
 ![Magnified: the Hindi subtitle](images/ingame-xs2-hindi-movie-crop.png)
@@ -467,33 +476,49 @@ measure with a 5 px space (`$xx1,4`) and without the brackets. The string
 ![Magnified: the save screen's title and the saving message](images/ingame-xs2-amharic-save-crop.png)
 ![](images/ingame-xs2-amharic-saving-crop.png)
 
-The cfe line 0008 capture comes from an earlier build of the same day whose
-fonts and `sc8001` bytes are identical to the final disc's (compared); the
-final run reached the line but the capture missed it.
+**The party names, tested.** The first reading of the blank names blamed
+the name boxes because "the same bytes" draw elsewhere; a review pointed
+out that the seven Georgian codes were used by no other string, so the
+result could not tell the surface from the codes. A scratch build (not
+kept; the LANGTEST fonts and tree with three blocks changed) settled it:
+`sc1010` 0005 holds `ქაოსი ჯინ ქანაანი` (every one of the seven codes) and
+`MainMenu.txd` 0000 holds `हिंसा`, written B1 B2, two single codes the
+movie draws. The field window drew the Georgian; the Copilot box stayed
+blank. The retail disc at the same point shows `chaos` as Copilot and
+`Canaan` as Extra, so those boxes do come from 0000 and 0012 (Main Pilot
+`Canaan` comes from somewhere else). The menu's name boxes draw nothing for
+these strings whatever the codes; why has not been read. The save screen's
+title, also a `MainMenu.txd` string, draws its high bytes, so it is not the
+file either.
+
+| | |
+|---|---|
+| ![Retail: Copilot chaos, Extra Canaan](images/ingame-xs2-retail-menu-crop.png) | ![Scratch: Hindi in 0000, Copilot blank](images/ingame-xs2-hindi-menu-test-crop.png) |
+
+![Scratch: the Georgian codes in the field window](images/ingame-xs2-georgian-fieldbox-test-crop.png)
 
 **The questions, answered:**
 
 1. *Do lone high bytes draw?* Yes, 0x80-0x9F and 0xA0-0xFF, in the movie
-   and in cfe lines (font0); D9-E0 in a `.txd` menu string (the save
-   screen's title) and in an executable string. In the field menu's party
-   names the codes 81 8D 8F 90 9D A0 A3 drew nothing; they were used in no
-   other string, so this does not show that the surface fails, nor that the
-   codes do. No lone 0x80-0x9F code was seen in a font1 surface. Not tested
-   in the field box (its Arabic used pairs) and not reached in battle.
+   and in cfe lines (font0) and in the field window (font1: the codes 81
+   8D 8F 90 9D A0 A3, scratch build); D9-E0 in a `.txd` menu string (the
+   save screen's title) and in an executable string. Not in the field
+   menu's party names, with either the Georgian codes or B1 B2. Not reached
+   in battle.
 2. *Do A4 pairs from A4A6 up and AD cells draw?* Yes: A4 pairs in the field
-   box; AD cells in the field box (AD85, cut at the cell's edge: the glyph
-   was wider than the cell), movie (AD81, AD82), cfe (AD80,
-   ADC0, the last fixed code) and the save screen (AD83, AD84). A fixed cell
-   advances 19 px whatever its ink, so a narrow letter on that tier leaves a
-   gap after it (the `አ` of the save title).
+   box; AD cells in the field box (AD85), movie (AD80, AD82), cfe (AD80,
+   AD81, ADC0, the last fixed code) and the save screen (AD83, AD84). A
+   fixed cell advances 19 px whatever its ink, so a narrow letter on that
+   tier leaves a gap after it (the `አ` of the save title).
 3. *Are RTL lines left alone by the window's wrap?* Yes, at 410 px, on both
    lines of 0006.
 4. *Are subtitle and cfe lines centred?* Yes, each line on its own.
 5. *Does the battle HUD take names from `batdat.us` or `MainMenu.txd`?* Not
-   reached. When it is, a blank result will not answer this either while
-   both files carry the same Georgian codes that drew nothing in the menu. After the save point the next area (`sc1020`, Canaan's
+   reached. After the save point the next area (`sc1020`, Canaan's
    lock-on tutorial and a truck to shoot) came up, and about five minutes of
-   walking past it did not start a battle.
+   walking past it did not start a battle. Since the menu's name boxes draw
+   no translated name at all, a test should give `batdat.us` and
+   `MainMenu.txd` different names and keep one of them in English.
 6. *Which face does each surface use?* Not tested (no scratch build with
    different glyphs in the two faces). The code reading above stands.
 
@@ -515,19 +540,7 @@ final run reached the line but the capture missed it.
 * **The party names.** With 0000, 0003 and 0012 in Georgian the field menu
   shows the Copilot and Extra name boxes empty, while Main Pilot still reads
   `Canaan` (that box takes its name from a string this tree did not change).
-  The Copilot box (chaos, 0000: 81 8D 90 9D A3) is empty as a whole, so A3
-  did not draw there either. A first reading of this result blamed the name
-  boxes, because "the same bytes" draw elsewhere; a review found that
-  wrong. The seven Georgian codes (81 8D 8F 90 9D A0 A3) are used by the
-  Georgian strings only: the Hindi took other 80-9F and A5-D8 codes, the
-  save title D9-DB and AD pairs, `Saving...` D9-E0. Six of the seven are
-  the retail font's placeholder-dot cells, which the allocator gives out
-  first, and 81 8D 8F 90 9D are also the five codes cp1252 leaves
-  undefined. So two explanations stand: the name boxes draw these strings
-  some other way, or something on the way treats these particular codes
-  as nothing. The test that tells them apart: names made of codes already
-  seen drawing (say Hindi letters on 8E 9C and B1 B2) in the menu, and the
-  Georgian codes in a field-window line.
+  See *The party names, tested* above: the name boxes, not the codes.
 * **Glyphs that do not fit the cell.** SF Arabic's required ligature
   sheen+yeh final (`uni0634064A.fina`, in الشيء) is 25 px wide at 18 px/em.
   The scan put it on a fixed cell, 20 columns wide, and the five columns
@@ -538,9 +551,10 @@ final run reached the line but the capture missed it.
   `lang-scan` now draws a too-wide glyph narrower (AD85 at 78%, ADC0 at
   98%) and refuses one that loses ink above or below the cell; that refusal
   then caught the Hindi u-sign under सु and फु at 18 px, hence `--px 17.5`.
-  The rebuilt disc has not been booted, so the narrowed ligature is seen
-  only in `lang-preview`.
-  ![In game, the build before the fix: الشيء with the ligature cut](images/ingame-xs2-arabic-box-clipped-crop.png)
+  The rebuilt disc draws the narrowed ligature whole (the magnified 0004
+  above).
+  ![In game, the first build: الشيء with the ligature cut](images/ingame-xs2-arabic-box-clipped-crop.png)
+  ([the whole first-build capture](images/ingame-xs2-arabic-box-before-fix.png))
   ![lang-preview of the rebuilt font: the ligature narrowed, whole](images/preview-xs2-arabic-0004-fixed.png)
 * **Devanagari spacing.** Without `--tight` the headline of Hindi words
   breaks between glyphs, and a short i (ि) that the shaper puts in its own
