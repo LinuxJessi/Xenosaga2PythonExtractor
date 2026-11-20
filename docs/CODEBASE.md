@@ -38,7 +38,8 @@ The Episode I kit's rules, kept (the first one with numpy added):
                             │                         spu2synth.py                  the PS2's music render
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
-                            └─ patch / recolor ─► repack.py, recolor.py
+                            ├─ patch / recolor ─► repack.py, recolor.py
+                            └─ texture-import ─► teximport.py ─► texenc.py, pngread.py, txy.py, xtx.py, repack.py
 ```
 
 ## The modules
@@ -67,6 +68,9 @@ The Episode I kit's rules, kept (the first one with numpy added):
 | `smallfiles.py` | packs, title logos, the save icon, the battle database, map/actor tables |
 | `repack.py` | writes objects back into a disc copy (same size, or grown and moved) |
 | `recolor.py` | hue-shifts named textures in every copy on a disc |
+| `pngread.py` | reads any ordinary PNG to RGBA (standard library and numpy): every colour type, depth, filter, Adam7 |
+| `texenc.py` | encodes edited pictures back into a txy block in place: shared-palette solver, quantiser, twins, refusals |
+| `teximport.py` | `texture-import`: the edited tree, the disc scan, the sweep, UI sheets and .glb images, write and verify |
 | `gui.py` | the local web GUI |
 | `toolfind.py` | finds ffmpeg: the copy bundled under `tools/` first, then PATH |
 | `build.py` | builds the double-click bundle with PyInstaller (`packaging/`) |

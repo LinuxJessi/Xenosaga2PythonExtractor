@@ -61,7 +61,7 @@ Episode III embeds in its packages, standalone here.
 Bank count: 0 = placeholder (4 files), 1 = characters and props (723),
 2-3 = field maps (207), 4/8/23 = skyboxes and animated pages (7). A bank
 table is record 0 (`canvas_width` at word 2, strip count word 5, entry count
-word 6), the strip records `{data_off, gs_block, w, h, 0, qwords, ?, 4}`, and
+word 6), the strip records `{data_off, gs_block, w, h, 0, w*h/4 + 2, w/8, h/8}` (below), and
 the entry table (0x60 each, ending where the first strip's pixels start):
 
     +0x00 gs addr  +0x04 fmt (0x13 PSMT8, 0x14 PSMT4, 0 CT32)  +0x08 w  +0x0C h
@@ -81,6 +81,41 @@ its residual noisy map entries. Three entries on the disc have bank
 
 Swizzles and CLUT order are Episode III's (`chrtex.py`), PSMT4 included.
 Two files have more than 512 entries (599 and 629).
+
+**Strip records and headers (2026-11-20, all 9,648 strips of Disc 1).** A
+strip record is `{data_off, gs_block, w, h, 0, w*h/4 + 2, w/8, h/8}`: word 5
+is the upload's size in quadwords and words 6 and 7 count 8x8 blocks. The
+0x20 bytes at `data_off` read as an upload header: three zero words (VIF
+NOPs), a VIF DIRECT word `0x50000000 | (w*h/4 + 1)`, then a GIF tag with NLOOP
+w*h/4, EOP set and FLG IMAGE; the pixels follow. Strips are page aligned, at
+most 32 rows high, and no two strips of one bank overlap (3,406 banks).
+
+**Palette pointer.** For every real entry `cbp` equals the CT32 block address
+of (palx, paly), so writing a palette where palx/paly point is right whichever
+field the engine reads. **Bogus entries:** `model\map\E2_ELS01.txy` entries
+53, 54 and 55 (`holo_cocpit01`) have bank and cbp 0xFFFFFFFF, palx = paly = 0
+(a palette inside index pixels) and decode from pixel data; E2_ELS01 is also
+the only file with partially overlapping entry footprints. `texture-import`
+refuses to edit them. True-colour entries have cbp 0xFFFFFFFF too (217 of
+219), which is normal for them.
+
+**Mip chains (+0x34).** Entry word 13 is 0 on 65,591 entries; on chain
+bases it is 0xFFFFFFFF, followed by entries of the same name and palette
+with 1..6 and half the size each step. The models use them: every one of the
+5,177 material batches whose texture is a chain base has nine register rows
+instead of seven or eight; its row 7, read as TEX1, has MXL equal to the
+chain's level count in all 5,177; rows 9 and 10, read as MIPTBP1/MIPTBP2,
+hold the level entries' GS addresses (+0x3800) in 5,114 of them. Plain
+materials have MXL 0 in row 7 (217,921 of 217,984). The row-to-register
+reading is inferred from these values and the register template in
+`FUN_001cec98` (6 TEX0_1, 8 CLAMP_1, 0x42/0x43 ALPHA, 0x14/0x15 TEX1),
+which was only partly traced; what the GS shows is not checked in the game.
+
+**Alpha.** Decoders show stored alpha a as min(2a, 255). The inverse is
+a = min(0x80, (A + 1) >> 1), exact for A in {0, 2, ..., 254, 255}. Raw alpha
+above 0x80 occurs only in 33 palette slots of the bogus E2_ELS01 entries and
+in `yajima\titleobj.xtx` (7,040 pixels), which a decoded PNG cannot carry;
+`texture-import` keeps such bytes wherever the decoded colour is unchanged.
 
 **Embedded pages.** 2,167 more txy blocks sit inside 697 other objects:
 `simajiri\esd\*.esd` (1,821 blocks in 592 files), `simajiri\esp\*.esp`

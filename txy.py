@@ -16,7 +16,7 @@ file of its own next to the ``.pxy`` mesh. Layout (offsets from the file)::
 
     bank table: record 0 {?, ?, canvas_width, canvas_height(nominal), 0,
                 strip_count, entry_count, 0}, then strip_count 0x20-byte
-                strip records {data_off, gs_block, width, height, 0, qwords, ?, 4}
+                strip records {data_off, gs_block, width, height, 0, w*h/4+2, w/8, h/8}
                 (pixels at data_off + 0x20), then entry_count 0x60-byte entries
                 ending right where the first strip's data starts:
         +0x00 gs address   +0x04 fmt (0x13 PSMT8, 0x14 PSMT4, 0 CT32)

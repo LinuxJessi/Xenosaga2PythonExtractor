@@ -31,6 +31,17 @@ Where to look first: `model/char/pc/` is the party (`shion00`, `kosmos00`,
 `jr00`, ...), `model/enemy/` the enemies and bosses, `model/robo/` the E.S.
 craft, `model/mobj/` map objects.
 
+## Painting textures and putting them back
+
+The images inside each `.glb` are named after the PNG files `browse` writes
+(`009_kosmos00_mune`), which are unique per texture page. Paint or replace
+an image in Blender, export as glTF 2.0 (.glb), put the file under
+`models/chain0/<same path>.glb` in a folder and run `texture-import`
+([MODDING.md](MODDING.md#editing-textures-texture-import)); only the images
+that changed are written, into a copy of the disc. Checked with Blender
+5.4.0: a plain import and export changes nothing, a painted square lands
+pixel for pixel.
+
 ## What to expect
 
 * **Nothing animates.** The motion files are not decoded. Bones pose by hand.
