@@ -429,7 +429,11 @@ def cmd_self_test(args) -> int:
             rc |= 1
             continue
         print(f"--- {name}")
-        rc |= mod.self_test() or 0
+        try:
+            rc |= mod.self_test() or 0
+        except Exception as e:              # a crash is a failure, and the other modules still run
+            print(f"FAIL  {name}: the self-test stopped with {type(e).__name__}: {e}")
+            rc |= 1
     return rc
 
 

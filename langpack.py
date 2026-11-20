@@ -1619,6 +1619,34 @@ def self_test() -> int:
             w, h, gray = fontmod.png_to_gray(png)
         check(rc == 0 and png[:4] == b"\x89PNG" and h == 48 and any(gray),
               "lang-preview draws the line from the rebuilt font")
+        # scan: the glyph a battle section's first string would start with is found
+        bt = Path(td) / "bt"
+        (bt / "chain0/yamamoto").mkdir(parents=True)
+        (bt / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"].replace(
+            "chaos", "\u05d3\u05d4").replace("Jin", "\u05d5"), encoding="utf-8")
+        ecol = Encoder(cfg, GlyphSet("c"), adr, f.metrics, collect=True, shapers=[SimpleShaper()])
+        firsts: set = set()
+        run_tree([bt], ecol, firsts)
+        check(firsts == {"u:\u05d4"} and ecol.kinds_of["u:\u05d5"] == {"battle"},
+              f"scan finds the glyph drawn first in a battle section's first string ({firsts})")
+        # hand-drawn cells: a PNG sheet and a key list
+        sheet = bytearray(40 * 24)
+        for y in range(6, 19):
+            for x in range(3, 9):
+                sheet[y * 40 + x] = 3
+            for x in range(25, 28):
+                sheet[y * 40 + x] = 2
+        (Path(td) / "cells.png").write_bytes(fontmod.sheet_to_png(sheet, 40, 24))
+        pg = from_png(Path(td) / "cells.png", ["u:\u05d0", "u:\u05d1"])
+        check(pg.glyphs["u:\u05d0"].bounds == (3, 8) and pg.glyphs["u:\u05d1"].bounds == (5, 7)
+              and pg.glyphs["u:\u05d1"].bitmap[10][6] == 2, "a PNG sheet of 20x24 cells is read cell by cell")
+        try:
+            from glyphs import require_shaping
+            require_shaping()
+        except GlyphError as ex:
+            check(False, str(ex))
+            print("self-test FAILED")
+            return 1
         # TrueType: a font built in code, shaped, rasterised, allocated and encoded
         ttf = Path(td) / "kittest.ttf"
         build_test_ttf(ttf)
