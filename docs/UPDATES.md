@@ -1,5 +1,30 @@
 # Updates
 
+## 2026-11-20 (later): text coverage
+
+* **`text-coverage`** (`coverage.py`): every place the game shows text and
+  what the kit does with it, counted from the disc; text drawn into pictures
+  and movies is listed apart. `--verify` checks that every unedited tree
+  imports as no change on each disc given (it does on both USA discs).
+* **Executable strings, control codes**: strings are read with the print
+  function's grammar (`FUN_00197bb8`; parameter counts agree with the table
+  at 0x0063EA40), so the save prompts (`0B 0E 01 01 00 00 00 ...`), the skip
+  line, `Start game?` and the memory-card prompt are listed whole. Codes and
+  their parameters are escapes in the tree; an edit that ends inside a code,
+  puts a zero byte where a character belongs, uses a code the loop never
+  passes or leaves a `$code` open is refused. A `lui` on another path of the
+  same function is followed to aligned string starts. The HDD installer's
+  EUC-JP prompts are listed. Blocks drawn only by the debug print are marked
+  `# debug (FUN_00195760 only)`, and blocks whose codes draw ASCII with the
+  8x8 system font say so. The tree format is 2; export again.
+* **Quest text**: each text must fit its field of the loader's record (read
+  from `FUN_0022ee08`, `FUN_0022f000`, `FUN_00232160`); a file an editor saved
+  with LF line ends gets its CR LF back, a mixed one is refused.
+* **Memory-card title** (`icontitle`, `carddata.bin.title.txt`): edited in
+  place; the characters the save writer `FUN_0019dc10` stamps (slot and
+  time) stay where they are. USA only.
+* Merged from `lang-exetext`: `exe-export` / `exe-import` themselves.
+
 ## 2026-11-20: strings in the executables (`exe-export` / `exe-import`)
 
 * **`exetext.py`**, borrowed from the Episode I kit's `ovltext.py`: every

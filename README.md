@@ -49,6 +49,7 @@ python cli.py dialogue    --iso "Disc 1.iso" --iso "Disc 2.iso" --out lines/ --v
 python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
 python cli.py exe-export  --iso "Disc 1.iso" --out exe/            # strings in the executables (Saving..., prompts)
 python cli.py exe-import  --iso modded.iso --text exe/ --out final.iso [--retail "Disc 1.iso"]   # in place; run last
+python cli.py text-coverage --iso "Disc 1.iso" --iso "Disc 2.iso" --verify   # every place the game shows text, and its status
 python cli.py font-extract --iso "Disc 1.iso" --out font/         # sheets as PNG, metrics, byte-to-cell table
 python cli.py font-rebuild --ref font/font0.us --sheets font/ --out new_font0.us
 python cli.py patch       --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
@@ -104,9 +105,11 @@ on their own. `python build.py` makes a standalone app with PyInstaller
 It also writes the menus (`yosikawa\*.txd` as `X.txd.txt`), the movie
 subtitles (`X.sub.txt`), the quest and citizen text (`iwase\*.txt`,
 Shift-JIS, as `X.sjis.txt`) and the battle database's names and descriptions
-(`batdat.us.txt`). Each kind has its own limit, and `text-import` says which
-one an edit broke: menus and quest text may not need more sectors than the
-original, subtitle text must stay inside what the retail subtitles reach,
+(`batdat.us.txt`) and the save's title in the memory-card browser
+(`carddata.bin.title.txt`). Each kind has its own limit, and `text-import`
+says which one an edit broke: menus and quest text may not need more sectors
+than the original, each quest text must fit its field of the loader's
+record, subtitle text must stay inside what the retail subtitles reach,
 battle strings may not get longer, and `--grow` relocates a dialogue bank
 within the room its loader has ([docs/MODDING.md](docs/MODDING.md)).
 
@@ -129,7 +132,14 @@ memory-card and disc-change prompts, `Total Exp`) go through `exe-export` /
 `exe-import`: each is rewritten in place, at most the `max N` bytes its
 header gives. Run `exe-import` last: afterwards the executable is no longer
 the retail one and the other text commands refuse the image; `--retail`
-redoes an image that was exe-patched before.
+redoes an image that was exe-patched before. Prompts with control codes (the
+save prompts, `Start game?`) are read the way the print function reads them,
+so a zero parameter byte does not cut them short.
+
+`text-coverage` lists every place the game shows text: the text above, with
+its counts, and apart from it the words drawn into pictures and movies (UI
+sheets, the "Story So Far" pages, the staff roll in `EPSTAFF.sfd`), which
+need picture editing and have no checked writer in the kit yet.
 
 ## How it is built
 

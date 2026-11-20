@@ -150,8 +150,10 @@ COMMAND_HELP = {
     "sb": "Disassemble one scene or map script, with every native call named and every "
           "spoken line shown beside the instruction that uses it. "
           "Example path: <code>cf\\sc1010.sb</code>.",
-    "text-export": "Write every dialogue, menu and subtitle bank to an editable UTF-8 tree "
-                   "(one file per bank, <code>### NNNN</code> markers).",
+    "text-export": "Write the game's text to an editable UTF-8 tree, one file per text object: dialogue banks, "
+                   "menus (item, skill and location names, help, the database), the battle names and messages, "
+                   "the quest, citizen and treasure text, movie subtitles and the save's title in the memory-card "
+                   "browser. Strings in the executables are <em>exe-export</em>.",
     "text-import": "Rebuild the banks you edited and patch them into a <em>copy</em> of the "
                    "disc. The whole import is refused if one bank no longer fits its slot; "
                    "every write is read back.",
@@ -162,6 +164,10 @@ COMMAND_HELP = {
                   "<code>max N</code> bytes, the rest of its slot filled with zeros. Run it <em>last</em>: "
                   "afterwards the executable is not the retail one and text-import, font-extract and lang-scan "
                   "refuse the image. For another round, give the retail disc as <em>Retail disc</em>.",
+    "text-coverage": "List every place the game shows text and what the kit does with it, counted from the disc: "
+                     "the text it edits, the strings in the executables, and the words drawn into pictures and "
+                     "movies (those need picture editing). <em>Verify</em> also checks that unedited exports import "
+                     "as no change.",
     "patch": "Replace whole objects in a copy of the disc. One replacement per line: "
              "<code>chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl</code>.",
     "self-test": "Run every module's built-in checks (no disc needed).",

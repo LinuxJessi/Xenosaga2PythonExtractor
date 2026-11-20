@@ -76,10 +76,30 @@ slot early or holds bytes in place, never the other way round. A fallback
 address inside a string's own bytes is ignored (no object starts inside
 text; the fallback misreads walking pointers there).
 
+**Control codes.** A run with a control byte (below 0x20, not tab or line
+feed) is read the way the print function FUN_00197bb8 reads it
+(``print_tokens``): a zero byte ends the string only in a character
+position, a control code is followed by its parameters (``CTRL_PARAMS``),
+which may be zero. The save prompts start ``0B 0E 01 01 00 00 00 0D 03 19
+03``, so a NUL-split scan saw only their first four bytes. Such a run is
+taken when it parses to a terminator, has no address-carrying code (0x16,
+0x17) and has three ASCII letters or reads as EUC-JP Japanese (the HDD
+installer prompts). The tree writes every code and its parameters as
+escapes (``show``); import re-reads an edit with the same grammar
+(``print_check``).
+
+**Another path's lui.** A ``lui`` whose register is rewritten on the
+straight path but that reaches a use through a branch, within its function
+(OV02 0x00A80350 ``addiu a1,s1,0x3348`` forms ``Start game?`` from ``lui
+s1,0xa8`` at 0x00A80294; s1 is rewritten at 0x00A802B4 on another arm), makes
+a string only at an 8-byte-aligned start after a NUL with three ASCII letters
+or Japanese text (``_literal_start``), and never ends a slot.
+
 Cross-checked 2026-11-20 against the Ghidra listing of the boot ELF (1,106
-strings): 24 are not found, all developer error messages whose ``lui`` sits
-on another path with the register reused in between. Every string of the
-OV01 and OV02 listings is found.
+strings): before the rule above 24 were not found, developer error messages
+whose ``lui`` sits on another path with the register reused in between; the
+ones named in docs/MODDING.md are now listed. Every string of the OV01 and
+OV02 listings is found.
 
 **Which file owns an address.** OV01.OVL and OV02.OVL both load at
 0x00A80000, and the boot ELF carries a third segment at the same address (its
@@ -145,7 +165,7 @@ from textcodec import TextError                 # noqa: E402
 from textpack import keyed_bodies, parse_blocks  # noqa: E402
 
 MANIFEST = "xs2-exe-export.json"
-FORMAT = 1
+FORMAT = 2                   # 2: strings read by the print function's grammar (control codes)
 BOOT_TREE = "BOOT.exe.txt"
 MIN_LEN = 2
 
@@ -229,6 +249,50 @@ def _writes(w: int) -> Optional[int]:
     return None
 
 
+# FUN_00195760 (USA): the debug print. It draws only when (DAT_008DAD04 & 3) == 3, a debug switch;
+# its format is the third argument (a2), its varargs after it.
+DEBUG_PRINT = 0x00195760
+DEBUG_REACH = 48             # instructions from forming the address to the call
+
+
+def _debug_call(exe: "Exe", at: int) -> bool:
+    """The address the instruction at ``at`` forms goes, on the straight path, into an argument
+    register of a call to FUN_00195760 (the debug print), and nowhere else first."""
+    try:
+        w = struct.unpack_from("<I", exe.data, exe.off_of(at))[0]
+    except ExeError:
+        return False
+    op, rt = w >> 26, (w >> 16) & 31
+    if op not in (0x09, 0x0D, 0x19) or not 4 <= rt <= 11:
+        return False
+    jal = (3 << 26) | ((DEBUG_PRINT >> 2) & 0x3FFFFFF)
+    try:
+        prev = struct.unpack_from("<I", exe.data, exe.off_of(at - 4))[0]
+    except ExeError:
+        prev = 0
+    if prev == jal:                                   # formed in the call's delay slot
+        return True
+    va = at + 4
+    for _ in range(DEBUG_REACH):
+        try:
+            w = struct.unpack_from("<I", exe.data, exe.off_of(va))[0]
+        except ExeError:
+            return False
+        kind = _branch_kind(w)
+        if kind is not None:
+            if w != jal:
+                return False
+            try:
+                slot = struct.unpack_from("<I", exe.data, exe.off_of(va + 4))[0]
+            except ExeError:
+                return False
+            return _writes(slot) != rt
+        if _writes(w) == rt:
+            return False
+        va += 4
+    return False
+
+
 def _addr(hi: int, w: int) -> int:
     imm = w & 0xFFFF
     if (w >> 26) == 0x0D:                                  # ori: zero-extended
@@ -262,6 +326,7 @@ class Ref:
     store: int = 0             # bytes the instruction writes there (0: not a store)
     load: int = 0              # for a load: where it ends, counted from its address
     op: str = ""               # the mnemonic, for the tree's comments
+    hist: bool = False         # an earlier lui of the same function on another path: a string start or nothing
 
 
 @dataclass
@@ -344,6 +409,7 @@ class Exe:
             last: Dict[int, Tuple[int, int]] = {}  # reg -> (hi16, lui VA): the fallback (weak)
             held = set()                           # regs whose straight-path value is hi+lo, not hi
             full: Dict[int, int] = {}              # reg -> a whole address (lui+addiu, gp+addiu), straight path
+            seen: Dict[int, List[Tuple[int, int]]] = {}   # reg -> every (hi16, lui VA) of this function
             after = None                           # what the branch before this instruction does
             for off in range(start, end, 4):
                 w = struct.unpack_from("<I", d, off)[0]
@@ -377,6 +443,14 @@ class Exe:
                             newfull = t
                     elif rs in last and rs not in held and va - last[rs][1] <= WEAK_REACH and text:
                         out.append((_addr(last[rs][0], w), Ref("hilo", va, self.name, weak=True), seg))
+                    if text and rs not in pending and rs not in full and rs != GP:
+                        # an earlier lui of this function into the same register, overwritten on the
+                        # straight path but reached through a branch (OV02 0x00A80350 ``addiu a1,s1,
+                        # 0x3348`` after ``lui s1,0xa8`` at 0x00A80294 and ``b 0x00A8031C``; s1 is
+                        # rewritten at 0x00A802B4 on another arm): a string's only at its start
+                        cur = last[rs][0] if rs in last and rs not in held else None
+                        for hi in sorted({h for h, at in seen.get(rs, ()) if va - at <= WEAK_REACH} - {cur}):
+                            out.append((_addr(hi, w), Ref("hilo", va, self.name, weak=True, hist=True), seg))
                 wr = rt if op == 0x0F else _writes(w)
                 if wr:
                     full.pop(wr, None)
@@ -389,6 +463,7 @@ class Exe:
                         else:
                             pending.pop(rt, None)
                         last[rt] = (w & 0xFFFF, va)
+                        seen.setdefault(rt, []).append((w & 0xFFFF, va))
                         held.discard(rt)
                     else:
                         pending.pop(wr, None)
@@ -413,6 +488,7 @@ class Exe:
                     full.clear()
                     last.clear()
                     held.clear()
+                    seen.clear()
                 after = _branch_kind(w)
         return out
 
@@ -444,21 +520,269 @@ def _textlike(raw: bytes) -> bool:
     return any(0x21 <= b <= 0x7E for b in raw) or bool(_euc_hint(raw))
 
 
+# ---- the print function's reading of a string (FUN_00197bb8, USA SLUS_208.92) ---------------
+#
+# At each character position the loop stops at 0x00. A byte below 0x20 is a control code
+# followed by a fixed number of parameter bytes, and a parameter may be any byte, 0x00
+# included (the save prompts start 0B 0E 01 01 00 00 00 0D 03 19 03). The counts are the
+# ones the switch in FUN_00197bb8 steps over; the table at 0x0063EA40 that FUN_00195178
+# (the ruby code's copy loop) reads gives the same numbers, with 0xFF for the two whose
+# length depends on a parameter: 0x08 (one flags byte, then 2, 2, 3, 2, 2 bytes for flag
+# bits 0-4, the bytes at 0x0069DE48) and 0x15 (one length byte n, then n bytes).
+# 0x14, 0x1A and 0x1C-0x1F are cases that break without moving the pointer: the loop would
+# read the same byte forever. 0x16 and 0x17 carry a 32-bit address (a string to print, a
+# function to call). A byte from 0x80 up is one character, or two when font.us_two_byte
+# (FUN_00194dd0) accepts the pair. '$' starts a $code (FUN_001970e0: the names at
+# 0x0063EAA0, each handler reading ASCII digits up to ';'); its bytes are ordinary
+# characters here, and a handler that does not find its ';' prints the '$' as a character.
+CTRL_PARAMS = {0x01: 1, 0x02: 1, 0x03: 1, 0x04: 1, 0x05: 1, 0x06: 3, 0x07: 0, 0x09: 0, 0x0A: 0, 0x0B: 0,
+               0x0C: 3, 0x0D: 1, 0x0E: 5, 0x0F: 3, 0x10: 5, 0x11: 6, 0x12: 2, 0x13: 2, 0x16: 4, 0x17: 7,
+               0x18: 1, 0x19: 1, 0x1B: 1}
+CTRL_08_BITS = (2, 2, 3, 2, 2)
+CTRL_HANG = (0x14, 0x1A, 0x1C, 0x1D, 0x1E, 0x1F)
+CTRL_ADDRESS = (0x16, 0x17)
+DOLLAR_CODES = ("ax", "ay", "az", "rx", "ry", "init", "save", "load", "col", "bg", "shadow", "alpha",
+                "zoom", "xx", "ruby", "prop", "han", "mark")
+MAX_PRINT = 0x1000                      # longest run the scan follows as one string
+
+
+class PrintError(ValueError):
+    def __init__(self, msg: str, pos: int):
+        super().__init__(msg)
+        self.pos = pos
+
+
+def print_tokens(data: bytes, i: int, end: int) -> Tuple[List[Tuple[str, int, int]], int]:
+    """The print function's reading of ``data[i:]`` up to ``end``: ([(kind, start, stop)], index
+    of the terminating 0x00). ``kind`` is "ctl" (a control code with its parameters) or "char".
+    PrintError when a code would hang the loop or the bytes end before a terminator or inside
+    a code's parameters."""
+    import font
+    toks: List[Tuple[str, int, int]] = []
+    start = i
+    while True:
+        if i >= end:
+            raise PrintError("no terminator: the string runs off its end", i)
+        b = data[i]
+        if b == 0:
+            return toks, i
+        if b < 0x20:
+            if b in CTRL_HANG:
+                raise PrintError(f"control byte \u27e6{b:02X}\u27e7: the print function (FUN_00197bb8) never moves "
+                                 f"past it, the game would hang", i)
+            if b == 0x08:
+                if i + 1 >= end:
+                    raise PrintError("the string ends inside the parameters of code \u27e608\u27e7", i)
+                n = 1 + sum(w for k, w in enumerate(CTRL_08_BITS) if data[i + 1] >> k & 1)
+            elif b == 0x15:
+                if i + 1 >= end:
+                    raise PrintError("the string ends inside the parameters of code \u27e615\u27e7", i)
+                n = data[i + 1] + 1
+            else:
+                n = CTRL_PARAMS[b]
+            if i + 1 + n >= end:
+                raise PrintError(f"the string ends inside the {n} parameter byte(s) of code \u27e6{b:02X}\u27e7",
+                                 i)
+            toks.append(("ctl", i, i + 1 + n))
+            i += 1 + n
+        elif b >= 0x80 and i + 1 < end and font.us_two_byte(b, data[i + 1]):
+            toks.append(("char", i, i + 2))
+            i += 2
+        else:
+            toks.append(("char", i, i + 1))
+            i += 1
+        if i - start > MAX_PRINT:
+            raise PrintError("longer than any string of the game", i)
+
+
+def print_check(raw: bytes) -> Optional[str]:
+    """None when the print function reads ``raw`` (a string without its terminator) as one
+    string ending exactly at its end; else why not."""
+    data = raw + b"\0"
+    try:
+        toks, term = print_tokens(data, 0, len(data))
+    except PrintError as e:
+        return str(e)
+    if term != len(raw):
+        return ("a NUL byte (\u27e600\u27e7) inside a string where a character belongs; the game would stop "
+                f"there (byte +{term})")
+    text = bytes(b for k, a, z in toks if k == "char" for b in raw[a:z])
+    for m in re.finditer(rb"\$([a-z]+)", text):
+        name = m.group(1).decode()
+        if any(name.startswith(c) for c in DOLLAR_CODES) and b";" not in text[m.end():]:
+            return (f"'${name}' has no ';' after it: the $code reader (FUN_001970e0) would read past the "
+                    f"end of the string")
+    return None
+
+
+def _print_text_ok(raw: bytes, toks: List[Tuple[str, int, int]]) -> bool:
+    """A run the code points at, read by the print function's grammar, is taken for text when
+    it has a control code, at least three ASCII letters in character positions (or characters
+    that read as EUC-JP Japanese), no lone byte
+    0x80-0x9F as a character and no address-carrying code (0x16/0x17: never in a prompt)."""
+    letters = 0
+    ctl = False
+    chars = bytearray()
+    for k, a, z in toks:
+        if k == "ctl":
+            if raw[a] in CTRL_ADDRESS:
+                return False
+            ctl = True
+            continue
+        chars += raw[a:z]
+        if z - a == 1:
+            b = raw[a]
+            if 0x80 <= b <= 0x9F or b == 0x7F:
+                return False
+            letters += 0x41 <= (b | 0x20) - 0x20 <= 0x5A if b < 0x80 else 0
+    # Japanese between the codes (the HDD installer's EUC-JP prompts in OV02) counts as text too
+    return ctl and (letters >= 3 or _euc_japanese(bytes(chars)))
+
+
+def _print_chars(raw: bytes) -> bytes:
+    """The character bytes of a string, its control codes and their parameters left out."""
+    data = raw + b"\0"
+    try:
+        toks, _ = print_tokens(data, 0, len(data))
+    except PrintError:
+        return bytes(c for c in raw if c >= 0x20)
+    return b"".join(raw[a:z] for k, a, z in toks if k == "char" and raw[a] >= 0x20)
+
+
+def _euc_japanese(raw: bytes) -> bool:
+    """The bytes read as EUC-JP, at least four characters, nearly all of them full-width kana,
+    kanji or full-width signs and letters (not half-width katakana, which a binary table's 0xA1-0xDF bytes read as in Shift-JIS)."""
+    try:
+        t = raw.decode("euc_jp")
+    except UnicodeDecodeError:
+        return False
+    kana = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF for c in t)
+    wide = sum(0x3000 <= ord(c) <= 0x303F or 0xFF01 <= ord(c) <= 0xFF5E or c in "\u2015\u2018\u2019\u201c\u201d"
+               for c in t)
+    return kana >= 4 and 3 * (kana + wide) >= 2 * len(t.replace(" ", "").replace("\n", ""))
+
+
+def _print_string(data: bytes, off: int, end: int) -> Optional[bytes]:
+    """The string at ``off`` as the print function reads it, when it is one (see _print_text_ok)."""
+    try:
+        toks, term = print_tokens(data, off, end)
+    except PrintError:
+        return None
+    raw = data[off:term]
+    return raw if _print_text_ok(raw, [(k, a - off, z - off) for k, a, z in toks]) else None
+
+
+def system_font_chars(raw: bytes) -> str:
+    """The ASCII letters, digits and signs of a string that its own codes put in the state where
+    the print function draws ASCII from the 8x8 system font rather than the font file: after
+    0x0B (which clears the mode bits), 0x19 with parameter bit 1 clear, or ``$han0;``/``$han2;``,
+    and before 0x19 with bit 1 set or ``$han1;`` (the handler at 0x00196FA0 sets bit 4 for
+    $han1; FUN_00197bb8 takes the font file's table only with bit 4 set). The state at the string's
+    start is the caller's and is not counted."""
+    data = raw + b"\0"
+    try:
+        toks, _ = print_tokens(data, 0, len(data))
+    except PrintError:
+        return ""
+    han: Optional[bool] = None
+    out = []
+    for k, a, z in toks:
+        if k == "ctl":
+            if raw[a] == 0x0B:
+                han = False
+            elif raw[a] == 0x19:
+                han = bool(raw[a + 1] & 2)
+            continue
+        c = raw[a]
+        if c == 0x24:
+            m = re.match(rb"\$han([0-2]);", raw[a:])
+            if m:
+                han = m.group(1) == b"1"
+        if han is False and z - a == 1 and 0x21 <= c <= 0x7E:
+            out.append(chr(c))
+    return "".join(out)
+
+
+def _address_codes(raw: bytes) -> List[bytes]:
+    """The 0x16/0x17 codes of a string with their parameters, in order ([] when it does not parse)."""
+    data = raw + b"\0"
+    try:
+        toks, _ = print_tokens(data, 0, len(data))
+    except PrintError:
+        return []
+    return [raw[a:z] for k, a, z in toks if k == "ctl" and raw[a] in CTRL_ADDRESS]
+
+
+def has_controls(raw: bytes) -> bool:
+    """A control byte other than tab and line feed: the string is shown by the grammar."""
+    return any(b < 0x20 and b not in (0x09, 0x0A) for b in raw)
+
+
+def show(codec, raw: bytes) -> str:
+    """The tree form of a string. With control codes, each code and its parameters are \u27e6XX\u27e7
+    escapes (a parameter 0x20 is not a space a translator could delete); characters as the
+    codec writes them. Exact: codec.from_text(show(raw)) == raw."""
+    if not has_controls(raw):
+        return codec.to_text(raw)
+    data = raw + b"\0"
+    try:
+        toks, term = print_tokens(data, 0, len(data))
+    except PrintError:
+        return codec.to_text(raw)
+    if term != len(raw):
+        return codec.to_text(raw)
+    out, run = [], bytearray()
+    for k, a, z in toks:
+        if k == "ctl":
+            if run:
+                out.append(codec._decode(bytes(run), False))
+                run.clear()
+            out.append("".join(f"\u27e6{b:02X}\u27e7" for b in raw[a:z]))
+        else:
+            run += raw[a:z]
+    if run:
+        out.append(codec._decode(bytes(run), False))
+    t = "".join(out)
+    return "\u27e623\u27e7" + t[1:] if t.startswith("#") else t
+
+
 def _string_at(exe: "Exe", seg: "Seg", va: int) -> Optional[bytes]:
     """The string starting at ``va``, or None: never in a code-only segment, never at a
-    function's first instruction (``addiu sp,sp,-N``), and it must look like text."""
+    function's first instruction (``addiu sp,sp,-N``), and it must look like text. A run
+    with control codes is read by the print function's grammar (``print_tokens``): its end is
+    the first 0x00 in a character position, not the first 0x00 (a parameter may be one)."""
     if va < seg.code_end:
         return None
     off = seg.off + va - seg.va
-    j = exe.data.find(b"\0", off, seg.off + seg.filesz)
-    if j < 0:
-        return None
     if va % 4 == 0 and off + 4 <= len(exe.data):
         w = struct.unpack_from("<I", exe.data, off)[0]
         if w >> 16 == 0x27BD and w & 0x8000:
             return None
-    raw = exe.data[off:j]
+    seg_end = seg.off + seg.filesz
+    j = exe.data.find(b"\0", off, seg_end)
+    first = exe.data[off:j] if j >= 0 else exe.data[off:seg_end]
+    if (j >= 0 and has_controls(first)) or (off < seg_end and 0 < exe.data[off] < 0x20
+                                            and exe.data[off] not in (0x09, 0x0A)):
+        g = _print_string(exe.data, off, seg_end)
+        if g is not None:
+            return g
+    if j < 0:
+        return None
+    raw = first
     return raw if _textlike(raw) else None
+
+
+def _literal_start(exe: "Exe", seg: "Seg", va: int) -> bool:
+    """A string start as the compiler lays literals out: 8-byte aligned, after a NUL (or at the
+    segment start), text by ``_string_at`` with three ASCII letters
+    (or Japanese, ``_euc_japanese``). The test for an address only another path's
+    ``lui`` forms (Ref.hist), so a stray hi/lo pair cannot land in the middle of a message."""
+    raw = _string_at(exe, seg, va) if va % 8 == 0 else None
+    if raw is None or (sum(0x41 <= (c | 0x20) - 0x20 <= 0x5A for c in raw if c < 0x80) < 3
+                       and not _euc_japanese(_print_chars(raw))):
+        return False
+    off = seg.off + va - seg.va
+    return off == seg.off or exe.data[off - 1] == 0
 
 
 def font_table_ranges(boot: bytes, prof) -> List[Tuple[int, int]]:
@@ -534,6 +858,8 @@ class ExeSet:
                 if ref.base is not None:
                     derived[own[0].name].append((target, ref))
                     continue
+                if ref.hist and not _literal_start(own[0], own[1], target):
+                    continue                # another path's lui: an aligned string start, or nothing at all
                 if ref.weak and _string_at(own[0], own[1], target) is None:
                     # the fallback lui is a string's only when it lands on a string start; any other
                     # address it forms past a string's terminator still ends that string's slot
@@ -618,6 +944,12 @@ class ExeSet:
                         s.twins.append((name, va))
                         t.twins.append((self.boot.name, va))
 
+    def debug_only(self, s: "ExeString") -> bool:
+        """Every reference to the string forms its address for FUN_00195760, the debug print."""
+        refs = [r for r in s.refs if r.text]
+        return bool(refs) and all(r.kind == "hilo" and not r.weak and r.file in self.exes
+                                  and _debug_call(self.exes[r.file], r.at) for r in refs)
+
     # -- text ------------------------------------------------------------
 
     def tree_text(self, name: str) -> str:
@@ -652,10 +984,17 @@ class ExeSet:
                 lines.append("# conversions: " + " ".join(c[3] for c in conv) + " (keep them, in this order)")
             if len(s.raw) == 3 and va % 4 == 0 and exe.seg_of(struct.unpack_from("<I", exe.data, s.off)[0]):
                 lines.append("# probably not text: these 4 bytes are also an address in this file (a pointer)")
+            sysf = system_font_chars(s.raw)
+            if sysf:
+                lines.append(f"# its codes draw {len(sysf)} ASCII character(s) here with the 8x8 system font (no $han1), "
+                             f"not the font file: font-extract does not cover that font, and its glyphs have not "
+                             f"been read")
+            if self.debug_only(s):
+                lines.append("# debug (FUN_00195760 only): drawn only by the debug print, behind a debug switch")
             hint = _euc_hint(s.raw)
             if hint:
                 lines.append(f"# a developer string? reads as {hint}")
-            lines.append(codec.to_text(s.raw))
+            lines.append(show(codec, s.raw))
         return "\n".join(lines) + "\n"
 
 
@@ -890,16 +1229,23 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
                     problems.append(f"{key}: the header says '{h}', but this executable gives the string "
                                     f"max {s.max} bytes; keep the header as exported")
                     continue
-                if body == codec.to_text(s.raw):
+                if body == show(codec, s.raw):
                     continue
                 try:
                     raw = codec.from_text(body)
                 except TextError as e:
                     problems.append(f"{key}: {e}")
                     continue
-                if b"\0" in raw:
-                    problems.append(f"{key}: a NUL byte (\u27e600\u27e7) inside a string; the game would stop there")
-                    continue
+                if b"\0" in raw or has_controls(raw) or b"$" in raw:
+                    # read the edit as the print function will: a NUL only as a code's parameter, no
+                    # code cut by the end, no code that hangs, every $code closed
+                    why = print_check(raw)
+                    if why is None and _address_codes(raw) != _address_codes(s.raw):
+                        why = ("a control code that carries an address (\u27e616\u27e7 or \u27e617\u27e7) was added, "
+                               "removed or changed; keep those exactly as exported")
+                    if why:
+                        problems.append(f"{key}: {why}")
+                        continue
                 if len(raw) > s.max:
                     problems.append(f"{key}: {len(raw)} bytes, but its slot holds max {s.max} bytes "
                                     f"(0x{va:08x}-0x{va + s.max:08x} with the terminator); shorten it by "
@@ -1065,7 +1411,7 @@ def _test_layout():
          "unref": 0x63F060, "ptr": 0x63F070, "inner": 0x63F080, "gp": 0x647FF0, "blocked": 0x63F0A0,
          "late": 0x63F0B0, "slot": 0x63F0C0, "saved": 0x63F0D0, "arm": 0x63F0E0,
          "ctl": 0x63F0F0, "noise": 0x647FE0, "stamp": 0x63F140, "copy": 0x63F160, "fmt": 0x63F170,
-         "weakpad": 0x63F190}
+         "weakpad": 0x63F190, "save": 0x63F200, "skip": 0x63F240, "hist": 0x63F280, "after": 0x63F2C0}
     return S
 
 
@@ -1083,10 +1429,12 @@ def synthetic_boot() -> bytes:
            "padded": b"No items to sell.", "unref": b"Unused", "ptr": b"Next Lv", "inner": b"Hello World",
            "gp": b"GP str", "blocked": b"Cut off", "late": b"\xa4\xa6Xy", "slot": b"Delay", "saved": b"Saved reg",
            "arm": b"Arm two", "ctl": b"\x19\x03Card OK", "noise": b"\x19\x03\x0cAB\x01",
-           "stamp": b"Path No. 01 done", "copy": b"(Player)", "fmt": b"%d,%d items", "weakpad": b"cdrom0:"}
+           "stamp": b"Path No. 01 done", "copy": b"(Player)", "fmt": b"%d,%d items", "weakpad": b"cdrom0:",
+           "save": SAVE_PROMPT, "skip": SKIP_PROMPT, "hist": HIST_PROMPT, "after": b"After"}
     for k, v in put.items():
         o = S[k] - DATA_VA
         seg[o:o + len(v)] = v
+    seg[S["after"] + 0x20 - DATA_VA] = 0xFF                 # data that is not text: ends 'After's slot
     # pointer words: 'twice' (its second reference) and 'ptr'; one inside 'inner' (+6 = "World")
     struct.pack_into("<III", seg, 0x63F100 - DATA_VA, S["twice"], S["ptr"], S["inner"] + 6)
     code = []
@@ -1121,6 +1469,15 @@ def synthetic_boot() -> bytes:
              _i(0x09, a0, a0, S["blocked"])]
     code += [_i(0x0F, 0, a0, _hi(S["unref"])), _i(0x0F, 0, a0, 0x1234),                   # a0 rewritten
              _i(0x09, a0, a0, S["unref"])]
+    code += [_i(0x0F, 0, a0, _hi(S["save"])), _i(0x09, a0, a0, S["save"])]               # NULs as parameters
+    code += [_i(0x0F, 0, a0, _hi(S["skip"])), _i(0x09, a0, a0, S["skip"])]               # 0x80 parameters
+    code += [_i(0x0F, 0, a0, _hi(S["after"])), _i(0x09, a0, a0, S["after"])]
+    s1, s2, s4 = 17, 18, 20
+    code += [_i(0x0F, 0, s1, _hi(S["hist"])), _i(0x04, 0, 0, 2), 0,                        # lui s1; b L
+             _i(0x09, s4, s1, -0x1280),                                                   # s1 rewritten (other arm)
+             _i(0x09, s1, a1, S["hist"])]                                                 # L: addiu a1,s1,lo
+    code += [_i(0x0F, 0, s2, _hi(S["padded"] + 3)), _i(0x04, 0, 0, 2), 0,                  # the same shape into
+             _i(0x09, s4, s2, -0x1280), _i(0x09, s2, a1, S["padded"] + 3)]                # a string's middle
     code += [(31 << 21) | 8, 0]
     text = b"".join(struct.pack("<I", w) for w in code)
     text += bytes(-len(text) % 0x1000)
@@ -1138,6 +1495,11 @@ def synthetic_boot() -> bytes:
     elf = bytes(head) + ph
     elf += bytes(0x1000 - len(elf)) + text + bytes(seg) + reginfo
     return elf
+
+
+SAVE_PROMPT = b"\x0b\x0e\x01\x01\x00\x00\x00\x0d\x03\x19\x03Save data?\n\x0c\x80  \xa1\xfb\x0c\x80\x80\x80 Yes"
+SKIP_PROMPT = b"\x0b\x0d\x03\x0c \x80 \xa2\xa4\x19\x03 button: Skip"
+HIST_PROMPT = b"\n\n\x19\x03Start?\x0c\x80  \x19\x00\xa1\xfb\x19\x03 Yes"
 
 
 def synthetic_overlay() -> bytes:
@@ -1185,7 +1547,9 @@ def self_test() -> int:
             S["slot"]: (b"Delay", 15, ["hilo"]), S["saved"]: (b"Saved reg", 15, ["hilo"]),
             S["arm"]: (b"Arm two", 15, ["hilo"]), S["ctl"]: (b"\x19\x03Card OK", 15, ["hilo"]),
             S["stamp"]: (b"Path No. 01 done", 31, ["hilo"]), S["copy"]: (b"(Player)", 8, ["hilo"]),
-            S["fmt"]: (b"%d,%d items", 31, ["hilo"]), S["weakpad"]: (b"cdrom0:", 15, ["hilo"])}
+            S["fmt"]: (b"%d,%d items", 31, ["hilo"]), S["weakpad"]: (b"cdrom0:", 15, ["hilo"]),
+            S["save"]: (SAVE_PROMPT, 63, ["hilo"]), S["skip"]: (SKIP_PROMPT, 63, ["hilo"]),
+            S["hist"]: (HIST_PROMPT, 63, ["hilo"]), S["after"]: (b"After", 31, ["hilo"])}
     check(set(got) == set(want), "exactly the referenced strings are listed: lui in a delay slot, a saved register "
                                  "across a call, a use behind a label; not the unreferenced one, not past a return, "
                                  "not the font table, not after the register is rewritten")
@@ -1195,6 +1559,33 @@ def self_test() -> int:
         if got.get(k) != v:
             print(f"      0x{k:08x}: got {got.get(k)}, want {v}")
     bs = es.strings["SLUS_208.92"]
+    check(got.get(S["save"], (b"",))[0] == SAVE_PROMPT and got.get(S["skip"], (b"",))[0] == SKIP_PROMPT,
+          "control codes read by the print function's grammar: NUL parameters (0E 01 01 00 00 00) do not end "
+          "the string, 0x80 parameters (0C 80 80 80) do not make it non-text; it ends at its true terminator")
+    check(S["hist"] in got and bs[S["hist"]].refs[0].weak and S["padded"] + 3 not in got,
+          "a lui on another path of the same function (the register rewritten on the straight path) makes a string "
+          "at an aligned literal start, and nothing in the middle of another string")
+    noise = ExeSet([("SLUS_208.92", boot, "boot")]).strings["SLUS_208.92"]
+    check(S["noise"] not in noise, "a control run without three letters is still not text")
+    for raw, toks_want in ((SAVE_PROMPT, 2), (b"\x15\x02\x01\x05ab", 1), (b"\x08\x05\x00\x10\x01\x02\x03Z", 1)):
+        try:
+            toks, term = print_tokens(raw + b"\0", 0, len(raw) + 1)
+            good = term == len(raw) and sum(k == "ctl" for k, _, _ in toks[:3]) >= toks_want - 1
+        except PrintError:
+            good = False
+        check(good, f"grammar: {raw[:1].hex()} with its parameters reads to the terminator")
+    check(print_check(b"\x08\x04\x00\x00") is not None and print_check(b"\x08\x04\x00\x00\x00") is None,
+          "0x08 takes 1 + 2/2/3/2/2 bytes for flag bits 0-4 (bit 2: three)")
+    check("hang" in (print_check(b"ab\x14cd") or ""), "0x14 (a case that does not move the pointer) is refused")
+    check("inside" in (print_check(b"ab\x0c\x80") or ""), "a code cut by the end is refused")
+    check("NUL" in (print_check(b"ab\0cd") or ""), "a NUL in a character position is refused")
+    check(print_check(b"$zoom12;ab") is None and "';'" in (print_check(b"ab$zoom12") or ""),
+          "an unclosed $code is refused, a closed one accepted")
+    codec = textcodec.UsCodec()
+    for raw in (SAVE_PROMPT, SKIP_PROMPT, HIST_PROMPT, b"#\x19\x03x", b"\xa4\xa6\x0c\x20\x20\x20\xe9"):
+        check(codec.from_text(show(codec, raw)) == raw, f"show() is exact for {raw[:12]!r}...")
+    check(show(codec, SKIP_PROMPT).startswith("\u27e60B\u27e7\u27e60D\u27e7\u27e603\u27e7\u27e60C\u27e7\u27e620\u27e7\u27e680\u27e7\u27e620\u27e7\u25b3"),
+          "parameters are escapes (a parameter 0x20 is not shown as a space), characters as the codec writes them")
     check(got[S["weakpad"]][1] == 15, "an address the fallback lui forms in a string's NUL padding ends its slot")
     check([(k, n) for k, n, _ in bs[S["stamp"]].stamps] == [(9, 1), (10, 1)],
           "sb 9(a2) / sb 10(a2) after lui+addiu a2: the code writes bytes +9 and +10 of the string")
@@ -1228,7 +1619,7 @@ def self_test() -> int:
         check(rc == 0 and set(man["files"]) == {BOOT_TREE, "OV01.OVL.exe.txt"} and man["build"] == "us"
               and man["files"][BOOT_TREE]["name"] == "SLUS_208.92" and man["files"][BOOT_TREE]["role"] == "boot",
               "export writes the manifest and one tree file per executable")
-        check("BOOT.exe.txt (SLUS_208.92): 19 strings" in err, "export prints the count per file")
+        check("BOOT.exe.txt (SLUS_208.92): 23 strings" in err, "export prints the count per file")
         bt0 = (tree / BOOT_TREE).read_text(encoding="utf-8")
         check("# the code writes byte +9 (sb SLUS_208.92 0x" in bt0 and "# conversions: %d %d (keep them" in bt0
               and "# the code copies the first 9 bytes of this string at fixed offsets" in bt0,
@@ -1292,6 +1683,25 @@ def self_test() -> int:
         bt.write_text(pristine, encoding="utf-8")
         edit("\nZone\n", "\nZo\u27e600\u27e7e\n")
         check(refused("NUL"), "a NUL is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        sv = show(textcodec.UsCodec(), SAVE_PROMPT)
+        edit("\n" + sv + "\n", "\n" + sv.replace("Save data?", "Save game?") + "\n")
+        ch, pr = plan(src, tree)
+        o3 = es.boot.off_of(S["save"])
+        check(pr == [] and ch["SLUS_208.92"][o3:o3 + len(SAVE_PROMPT) + 1] == SAVE_PROMPT.replace(b"data", b"game") + b"\0",
+              "a prompt with NUL parameters is edited in place, its parameters kept")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n" + sv + "\n", "\n" + sv.replace("Save data?", "Save\u27e600\u27e7data") + "\n")
+        check(refused("NUL byte"), "a NUL where a character belongs is refused in a prompt")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n" + sv + "\n", "\n" + sv.split(" Yes")[0][:-len("\u27e680\u27e7\u27e680\u27e7")] + "\n")
+        check(refused("ends inside"), "an edit that ends inside a code's parameters is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n" + sv + "\n", "\n" + sv.replace("Save", "S\u27e614\u27e7v") + "\n")
+        check(refused("hang"), "a control byte the print function never moves past is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\nSaving...\n", "\nSave $zoom3\n")
+        check(refused("no ';' after it"), "an unclosed $code is refused")
         bt.write_text(pristine, encoding="utf-8")
         edit("\n%d,%d items\n", "\n%d,%s items\n")
         check(refused("the %-conversions changed (exported: %d %d; now: %d %s)"), "a retyped conversion is refused")
