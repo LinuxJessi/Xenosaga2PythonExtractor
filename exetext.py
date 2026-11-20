@@ -33,19 +33,48 @@ prompts carry 0x19 0x03 and 0x0C codes). And the code points at it:
   calls, until rX is written or an unconditional jump or ``jr`` ends the
   path. As a fallback (Episode I's ``last_lui``), a ``lui`` reached only
   through a label (switch arms sharing one ``lui``, a ``lui`` in a likely
-  branch's slot) counts when the address is exactly a string's start;
+  branch's slot) makes a string only when the address is exactly a string's
+  start; any other address it forms in the NUL padding after a string ends
+  that string's slot (Disc 1: the 80-byte block FUN_001a5ff8 copies from
+  0x0063F730, right after ``cdrom0:\``);
 * an ``addiu``/byte load with base ``$gp`` (gp read from the boot ELF's
   ``.reginfo``, 0x006A2DF0 on the USA build): ``Next Lv`` and ``Zone`` live in
   ``.sdata``.
 
 Word and float loads and stores form addresses too: those end slots but do
-not make a string. A segment flagged executable and not writable is code, one
+not make a string.
+
+**Accesses through a whole address.** After ``lui rX,hi; addiu rX,rX,lo``
+the scan keeps the address in rX (on the same straight path) and reads
+``sb v,k(rX)``, ``lbu v,k(rX)``, ``addiu rY,rX,k`` as accesses at address+k:
+
+* a store into a string's own bytes is a stamp: the code writes there at run
+  time (Disc 1: FUN_0022e9e0 writes the path number into bytes +9 and +10 of
+  ``Path No. 01 achievement level...`` before printing it; ``sc0000.sb``
+  gets a scene number in +2..+5). The tree names them and an edit must keep
+  the same bytes at those offsets;
+* loads that reach the terminator are a copy of a known size (an inlined
+  ``strcpy``: ``ldl``/``ldr``, ``lw``, ``lb`` up to the NUL; OV01's
+  ``$han1;$prop1;$zoom15,10;...`` and ``(Player)``): ``max`` is then that
+  size minus the terminator, not the NUL padding, or the copy would arrive
+  without one;
+* any access past a string's terminator is another object and ends its slot.
+
+**Conversions.** Many strings are printf formats passed to a varargs
+formatter with a fixed set of arguments (Disc 1: FUN_00286d20 calls
+FUN_002aa5d8 with ``$han1;%s`` and one argument). Import compares the
+%-conversions of an edit with the exported string, by the argument each one
+reads (``%d`` and ``%x`` read the same; ``%s`` and ``%d`` do not; ``%%``
+reads nothing), and refuses any change. Which strings actually reach a
+formatter has not been traced, so every string is held to this. A segment flagged executable and not writable is code, one
 not executable is data. The overlays are one RWX segment each (one section,
 code then data): their code is taken to end after the last ``jr ra``. A
 function's first instruction (``addiu sp,sp,-N``) and ``jal`` targets are
 never strings. A data word or an instruction can still look like a reference
-by chance: such a false hit only adds a listed string or ends a neighbour's
-slot early, never the other way round.
+by chance: such a false hit only adds a listed string, ends a neighbour's
+slot early or holds bytes in place, never the other way round. A fallback
+address inside a string's own bytes is ignored (no object starts inside
+text; the fallback misreads walking pointers there).
 
 Cross-checked 2026-11-20 against the Ghidra listing of the boot ELF (1,106
 strings): 24 are not found, all developer error messages whose ``lui`` sits
@@ -100,6 +129,7 @@ import bisect
 import hashlib
 import json
 import os
+import re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -145,6 +175,12 @@ _RT_WRITERS = set(range(0x08, 0x10)) | {0x18, 0x19, 0x1A, 0x1B, 0x1E, 0x37} | se
 _TEMPS = tuple(range(1, 16)) + (24, 25, 31)
 _TEXT_OPS = {0x09, 0x0D, 0x19, 0x20, 0x24, 0x28}       # addiu, ori, daddiu, lb, lbu, sb
 WEAK_REACH = 0x1000          # bytes from a lui to a use reached only through a label
+# bytes a store writes, by opcode: sb sh swl sw sdl sdr swr sq swc1 sdc1 sqc2 sd
+# where a load at offset k ends (k + bytes; lwl/ldl name the last byte of their word)
+_LOAD_END = {0x20: 1, 0x24: 1, 0x21: 2, 0x25: 2, 0x23: 4, 0x27: 4, 0x31: 4, 0x37: 8, 0x35: 8, 0x1E: 16,
+             0x36: 16, 0x22: 1, 0x1A: 1, 0x26: 4, 0x1B: 8}
+_STORE_WIDTH = {0x28: 1, 0x29: 2, 0x2A: 4, 0x2B: 4, 0x2C: 8, 0x2D: 8, 0x2E: 4, 0x1F: 16,
+                0x39: 4, 0x3D: 8, 0x3E: 16, 0x3F: 8}
 
 
 def _branch_kind(w: int) -> Optional[str]:
@@ -220,8 +256,12 @@ class Ref:
     kind: str                  # "hilo" | "gp" | "ptr" | "call" (a jal target: code, never a string)
     at: int                    # VA of the use instruction or the pointer word
     file: str                  # the file the reference is in
-    weak: bool = False         # a lui reached only through a label: counts for a string start only
+    weak: bool = False         # a lui reached only through a label: makes a string only at its start
     text: bool = True          # forms the address or reads a byte; False for word/float loads and stores
+    base: Optional[int] = None  # an access through a register already holding a full address (lui+addiu)
+    store: int = 0             # bytes the instruction writes there (0: not a store)
+    load: int = 0              # for a load: where it ends, counted from its address
+    op: str = ""               # the mnemonic, for the tree's comments
 
 
 @dataclass
@@ -232,6 +272,10 @@ class ExeString:
     max: int                   # bytes of text the slot holds (the terminator not counted)
     refs: List[Ref] = field(default_factory=list)
     twins: List[Tuple[str, int]] = field(default_factory=list)   # (file, va): the same bytes elsewhere
+    stamps: List[Tuple[int, int, Ref]] = field(default_factory=list)  # (offset, bytes, ref): code writes there
+    copied: int = 0            # bytes the code copies at fixed offsets, terminator included (0: not seen)
+    copy_refs: List[Ref] = field(default_factory=list)
+    slot: int = 0              # max before the copy limit
 
 
 class Exe:
@@ -298,6 +342,8 @@ class Exe:
             end = min(end, split)
             pending: Dict[int, int] = {}          # reg -> hi16 on the straight path (strong)
             last: Dict[int, Tuple[int, int]] = {}  # reg -> (hi16, lui VA): the fallback (weak)
+            held = set()                           # regs whose straight-path value is hi+lo, not hi
+            full: Dict[int, int] = {}              # reg -> a whole address (lui+addiu, gp+addiu), straight path
             after = None                           # what the branch before this instruction does
             for off in range(start, end, 4):
                 w = struct.unpack_from("<I", d, off)[0]
@@ -306,17 +352,36 @@ class Exe:
                 if op == 0x03:
                     out.append((((va + 4) & 0xF0000000) | ((w & 0x3FFFFFF) << 2),
                                 Ref("call", va, self.name, text=False), seg))
-                elif op in _USE_OPS:
+                newfull = None
+                if op in _USE_OPS:
                     text = op in _TEXT_OPS
+                    simm = ((w & 0xFFFF) ^ 0x8000) - 0x8000
                     if rs in pending:
-                        out.append((_addr(pending[rs], w), Ref("hilo", va, self.name, text=text), seg))
+                        t = _addr(pending[rs], w)
+                        out.append((t, Ref("hilo", va, self.name, text=text), seg))
+                        if op in (0x09, 0x0D, 0x19):
+                            newfull = t
+                    elif rs in full and op != 0x0D:
+                        # rX already holds a whole address: an access at a fixed offset from it
+                        # (``sb v1,9(a2)`` stamping a digit into a string, a field after it)
+                        t = (full[rs] + simm) & 0xFFFFFFFF
+                        out.append((t, Ref("hilo", va, self.name, text=False, base=full[rs],
+                                           store=_STORE_WIDTH.get(op, 0), load=_LOAD_END.get(op, 0),
+                                           op=_mnemonic(op)), seg))
+                        if op in (0x09, 0x19):
+                            newfull = t
                     elif rs == GP and self.gp is not None and op != 0x0D:
-                        out.append(((self.gp + ((w & 0xFFFF) ^ 0x8000) - 0x8000) & 0xFFFFFFFF,
-                                    Ref("gp", va, self.name, text=text), seg))
-                    elif rs in last and va - last[rs][1] <= WEAK_REACH and text:
+                        t = (self.gp + simm) & 0xFFFFFFFF
+                        out.append((t, Ref("gp", va, self.name, text=text), seg))
+                        if op in (0x09, 0x19):
+                            newfull = t
+                    elif rs in last and rs not in held and va - last[rs][1] <= WEAK_REACH and text:
                         out.append((_addr(last[rs][0], w), Ref("hilo", va, self.name, weak=True), seg))
                 wr = rt if op == 0x0F else _writes(w)
                 if wr:
+                    full.pop(wr, None)
+                    if newfull is not None and wr == rt and after != "likely":
+                        full[wr] = newfull
                     lo_add = op in (0x09, 0x0D) and rs == rt
                     if op == 0x0F:
                         if after != "likely":       # a likely slot runs only on the taken path
@@ -324,20 +389,43 @@ class Exe:
                         else:
                             pending.pop(rt, None)
                         last[rt] = (w & 0xFFFF, va)
+                        held.discard(rt)
                     else:
                         pending.pop(wr, None)
-                        if not lo_add and wr in last and op != 0x0F:
-                            del last[wr]
+                        # after ``addiu rX,rX,lo`` rX holds hi+lo on this path: until a jump
+                        # leads to a label (where another arm's lui may arrive), a later
+                        # ``lbu k(rX)`` is an access through the whole address, not a lui pair
+                        if lo_add and wr in last:
+                            held.add(wr)
+                        else:
+                            last.pop(wr, None)
+                            held.discard(wr)
                 if after == "jump":                 # the delay slot ran; what follows is a label
                     pending.clear()
+                    full.clear()
+                    held.clear()
                 elif after == "call":               # the callee clobbers the temporaries
                     for r in _TEMPS:
                         pending.pop(r, None)
+                        full.pop(r, None)
                 elif after == "ret":                # end of a function
                     pending.clear()
+                    full.clear()
                     last.clear()
+                    held.clear()
                 after = _branch_kind(w)
         return out
+
+
+_MNEMONIC = {0x09: "addiu", 0x19: "daddiu", 0x20: "lb", 0x21: "lh", 0x22: "lwl", 0x23: "lw", 0x24: "lbu",
+             0x25: "lhu", 0x26: "lwr", 0x27: "lwu", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw",
+             0x2C: "sdl", 0x2D: "sdr", 0x2E: "swr", 0x1A: "ldl", 0x1B: "ldr", 0x1E: "lq", 0x1F: "sq",
+             0x31: "lwc1", 0x35: "ldc1", 0x36: "lqc2", 0x37: "ld", 0x39: "swc1", 0x3D: "sdc1", 0x3E: "sqc2",
+             0x3F: "sd"}
+
+
+def _mnemonic(op: int) -> str:
+    return _MNEMONIC.get(op, f"op{op:#x}")
 
 
 def _textlike(raw: bytes) -> bool:
@@ -435,18 +523,26 @@ class ExeSet:
 
     def _build(self) -> None:
         targets: Dict[str, Dict[int, List[Ref]]] = {n: {} for n in self.exes}
+        extra: Dict[str, set] = {n: set() for n in self.exes}            # addresses that only end slots
+        weak: Dict[str, set] = {n: set() for n in self.exes}             # fallback addresses, not strings
+        derived: Dict[str, List[Tuple[int, Ref]]] = {n: [] for n in self.exes}
         for exe in self.exes.values():
             for target, ref, seg in exe.scan():
                 own = self._owner(target, exe, seg)
                 if own is None:
                     continue
+                if ref.base is not None:
+                    derived[own[0].name].append((target, ref))
+                    continue
                 if ref.weak and _string_at(own[0], own[1], target) is None:
+                    # the fallback lui is a string's only when it lands on a string start; any other
+                    # address it forms past a string's terminator still ends that string's slot
+                    weak[own[0].name].add(target)
                     continue
                 targets[own[0].name].setdefault(target, []).append(ref)
         for name, exe in self.exes.items():
             tabs = self.tables if exe is self.boot else []
-            bounds = sorted(set(targets[name]) | {a for a, _ in tabs})
-            found: Dict[int, ExeString] = {}
+            cands: Dict[int, Tuple[Seg, bytes]] = {}
             for va, refs in sorted(targets[name].items()):
                 if any(a <= va < b for a, b in tabs):
                     continue
@@ -454,8 +550,37 @@ class ExeSet:
                     continue
                 seg = exe.seg_of(va)
                 raw = _string_at(exe, seg, va)
-                if raw is None:
-                    continue
+                if raw is not None:
+                    cands[va] = (seg, raw)
+            # accesses at a fixed offset from a register that holds a whole address: a store into
+            # a string's own bytes (terminator included) is a stamp the edit must keep; a load there
+            # is a read; anything else (past the terminator, or an address formed inside) is an
+            # object of its own and ends the slot
+            starts = sorted(cands)
+
+            def inside(t: int) -> Optional[int]:
+                i = bisect.bisect_right(starts, t) - 1
+                return starts[i] if i >= 0 and t <= starts[i] + len(cands[starts[i]][1]) else None
+            # a fallback address inside a string's own bytes is not another object (the fallback
+            # misreads some accesses); one in the NUL padding after it is (Disc 1: 0x0063F730, the
+            # 80 bytes FUN_001a5ff8 copies, after 'cdrom0:\'; 0x00645190 after 'pfs1:/Your Saves')
+            extra[name] |= {t for t in weak[name] if inside(t) is None}
+            stamps: Dict[int, List[Tuple[int, int, Ref]]] = {}
+            reads: Dict[int, List[Tuple[int, Ref]]] = {}
+            for t, ref in derived[name]:
+                st = inside(t)
+                if st is not None and ref.store:
+                    stamps.setdefault(st, []).append((t - st, ref.store, ref))
+                elif st is not None:
+                    if ref.load:
+                        reads.setdefault(st, []).append((t - st + ref.load, ref))
+                    continue            # a read, or a pointer walking the string (``addiu a0,a0,1``)
+                else:
+                    extra[name].add(t)
+            bounds = sorted(set(targets[name]) | extra[name] | {a for a, _ in tabs})
+            found: Dict[int, ExeString] = {}
+            for va, (seg, raw) in cands.items():
+                refs = targets[name][va]
                 off = seg.off + va - seg.va
                 seg_end = seg.off + seg.filesz
                 k = off + len(raw)
@@ -465,9 +590,21 @@ class ExeSet:
                 i = bisect.bisect_right(bounds, va)
                 if i < len(bounds) and bounds[i] < seg.va + seg.filesz:
                     end = min(end, seg.off + bounds[i] - seg.va)
-                found[va] = ExeString(va, off, raw, end - off - 1,
+                slot = end - off - 1
+                # loads at fixed offsets that reach the terminator: the code copies the string
+                # with a size it knows (an inlined strcpy: ldl/ldr, lw, lb ... up to the NUL), so
+                # a longer text would arrive without its terminator. max is then the copy's size
+                rd = reads.get(va, [])
+                copied = max((e for e, _ in rd), default=0)
+                if copied < len(raw) + 1:
+                    copied = 0
+                found[va] = ExeString(va, off, raw, min(slot, copied - 1) if copied else slot,
                                       sorted((r for r in refs if r.text),
-                                             key=lambda r: (r.file != name, r.at, r.kind)))
+                                             key=lambda r: (r.file != name, r.at, r.kind)),
+                                      stamps=sorted(stamps.get(va, []), key=lambda x: (x[0], x[2].at)),
+                                      copied=copied, copy_refs=sorted({r.at: r for _, r in rd}.values(),
+                                                                      key=lambda r: r.at) if copied else [],
+                                      slot=slot)
             self.strings[name] = found
         # the boot ELF's resident overlay copy and the overlay file: the same string twice
         if self.boot:
@@ -490,6 +627,9 @@ class ExeSet:
                  "# Each '### @ADDRESS max N bytes' block is one string the code points at. Edit the line under",
                  "# it, in place: at most N bytes as the game stores them (one byte per ASCII or Latin-1",
                  "# letter, one per escape). A real line break is \u27e60A\u27e7. Keep every block, in order.",
+                 "# Keep every %-conversion (%s, %d, %x, ...) in the same order: many of these strings go to a",
+                 "# printf-style formatter with a fixed set of arguments. Keep $codes; and where a block says the",
+                 "# code writes bytes at run time, keep those bytes where they are.",
                  "# exe-import must be the last step: afterwards this disc's executable is not the retail one."]
         for va, s in sorted(self.strings[name].items()):
             lines.append(f"### @0x{va:08x} max {s.max} bytes")
@@ -500,6 +640,16 @@ class ExeSet:
                 lines.append(f"# the code also points inside this string, {s.max} bytes in: the slot ends there")
             for f, a in s.twins:
                 lines.append(f"# the same string is in {f} at 0x{a:08x}: give both the same text")
+            if s.copied and s.max < s.slot:
+                cr = ", ".join(f"{r.op} 0x{r.at:08x}" for r in s.copy_refs[:4]) + (", ..." if len(s.copy_refs) > 4 else "")
+                lines.append(f"# the code copies the first {s.copied} bytes of this string at fixed offsets ({cr}): "
+                             f"max is {s.max}, not the {s.slot} bytes of NUL padding, or the copy loses its terminator")
+            if s.stamps:
+                lines.append(f"# the code writes {_stamp_text(s)} of this string at run time: keep "
+                             f"those bytes where they are (as exported, counting from +0)")
+            conv = [c for c in _conversions(s.raw) if c[0] != "?"]
+            if conv:
+                lines.append("# conversions: " + " ".join(c[3] for c in conv) + " (keep them, in this order)")
             if len(s.raw) == 3 and va % 4 == 0 and exe.seg_of(struct.unpack_from("<I", exe.data, s.off)[0]):
                 lines.append("# probably not text: these 4 bytes are also an address in this file (a pointer)")
             hint = _euc_hint(s.raw)
@@ -507,6 +657,43 @@ class ExeSet:
                 lines.append(f"# a developer string? reads as {hint}")
             lines.append(codec.to_text(s.raw))
         return "\n".join(lines) + "\n"
+
+
+def _stamp_text(s: "ExeString") -> str:
+    parts = []
+    for k, n, r in s.stamps:
+        span = f"+{k}" if n == 1 else f"+{k}..+{k + n - 1}"
+        parts.append(f"byte {span} ({r.op} {'' if not r.file else r.file + ' '}0x{r.at:08x})")
+    return ", ".join(parts)
+
+
+# a printf conversion (C89 plus the h/l/ll/q/L size letters the EE toolchain's formatters read)
+_CONV = re.compile(rb"%([-+ #0]*)(\*|[0-9]+)?(?:\.(\*|[0-9]*))?(hh|h|ll|l|L|q|j|z|t)?([diouxXeEfFgGaAcspn%])")
+
+
+# what argument a conversion reads: %d and %x take the same, %s and %d do not
+_CONV_CLASS = {**{c: "int" for c in b"diouxXc"}, **{c: "float" for c in b"eEfFgGaA"},
+               ord("s"): "string", ord("p"): "pointer", ord("n"): "count"}
+_CONV_CLASS = {bytes([k]): v for k, v in _CONV_CLASS.items()}
+
+
+def _conversions(raw: bytes) -> List[Tuple[str, int, str, str]]:
+    """Every '%' of a string read as a printf conversion: (argument kind, arguments taken, size letter,
+    the conversion as written). ``%%`` takes nothing and is left out; a '%' that does not
+    start a conversion is kind "?" (a formatter's reading of it is not known)."""
+    out = []
+    i = raw.find(b"%")
+    while i >= 0:
+        m = _CONV.match(raw, i)
+        if m is None:
+            out.append(("?", 0, "", raw[i:i + 2].decode("latin-1")))
+            i = raw.find(b"%", i + 1)
+            continue
+        if m.group(5) != b"%":
+            args = (m.group(2) == b"*") + (m.group(3) == b"*") + 1
+            out.append((_CONV_CLASS[m.group(5)], args, (m.group(4) or b"").decode(), m.group(0).decode("latin-1")))
+        i = raw.find(b"%", m.end())
+    return out
 
 
 def _euc_hint(raw: bytes) -> str:
@@ -718,6 +905,28 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
                                     f"(0x{va:08x}-0x{va + s.max:08x} with the terminator); shorten it by "
                                     f"{len(raw) - s.max}")
                     continue
+                old_c = [c[:3] for c in _conversions(s.raw)]
+                new_c = [c[:3] for c in _conversions(raw)]
+                if old_c != new_c:
+                    was = " ".join(c[3] for c in _conversions(s.raw)) or "none"
+                    now = " ".join(c[3] for c in _conversions(raw)) or "none"
+                    problems.append(f"{key}: the %-conversions changed (exported: {was}; now: {now}). The code may "
+                                    f"hand this string to a printf-style formatter with one argument per "
+                                    f"conversion, so an added, dropped, retyped or reordered one reads a wrong "
+                                    f"argument (a %s or %n then uses a garbage pointer). Keep them as exported; "
+                                    f"write %% for a percent sign")
+                    continue
+                if s.stamps:
+                    slot_new = raw + bytes(s.max + 1 - len(raw))
+                    moved = [(k, n) for k, n, _ in s.stamps
+                             if slot_new[k:k + n] != exe.data[s.off + k:s.off + k + n][:len(slot_new[k:k + n])]]
+                    if moved:
+                        problems.append(f"{key}: the code writes {_stamp_text(s)} of this string at run time, and "
+                                        f"the edit changes what sits there ("
+                                        + ", ".join(f"+{k}: exported {codec.to_text(exe.data[s.off + k:s.off + k + n])!r}"
+                                                    for k, n in moved)
+                                        + "). Keep those bytes at the same offsets: the game overwrites them")
+                        continue
                 why = checker.check(codec, body)
                 if why:
                     problems.append(f"{key}: {why}. Write \u27e6XX\u27e7 escapes if these bytes are meant")
@@ -855,7 +1064,8 @@ def _test_layout():
     S = {"pair": 0x63F000, "ori": 0x63F010, "load": 0x63F020, "twice": 0x63F030, "padded": 0x63F040,
          "unref": 0x63F060, "ptr": 0x63F070, "inner": 0x63F080, "gp": 0x647FF0, "blocked": 0x63F0A0,
          "late": 0x63F0B0, "slot": 0x63F0C0, "saved": 0x63F0D0, "arm": 0x63F0E0,
-         "ctl": 0x63F0F0, "noise": 0x647FE0}
+         "ctl": 0x63F0F0, "noise": 0x647FE0, "stamp": 0x63F140, "copy": 0x63F160, "fmt": 0x63F170,
+         "weakpad": 0x63F190}
     return S
 
 
@@ -872,7 +1082,8 @@ def synthetic_boot() -> bytes:
     put = {"pair": b"Saving...", "ori": b"Total Exp", "load": b"Class Lv", "twice": b"Zone",
            "padded": b"No items to sell.", "unref": b"Unused", "ptr": b"Next Lv", "inner": b"Hello World",
            "gp": b"GP str", "blocked": b"Cut off", "late": b"\xa4\xa6Xy", "slot": b"Delay", "saved": b"Saved reg",
-           "arm": b"Arm two", "ctl": b"\x19\x03Card OK", "noise": b"\x19\x03\x0cAB\x01"}
+           "arm": b"Arm two", "ctl": b"\x19\x03Card OK", "noise": b"\x19\x03\x0cAB\x01",
+           "stamp": b"Path No. 01 done", "copy": b"(Player)", "fmt": b"%d,%d items", "weakpad": b"cdrom0:"}
     for k, v in put.items():
         o = S[k] - DATA_VA
         seg[o:o + len(v)] = v
@@ -892,6 +1103,15 @@ def synthetic_boot() -> bytes:
     code += [_i(0x0F, 0, a0, _hi(S["late"])), _i(0x09, a0, a0, S["late"])]
     code += [_i(0x0F, 0, a0, _hi(prof.ascii_table_va + 0x40)),                           # into the font table
              _i(0x09, a0, a0, prof.ascii_table_va + 0x40)]
+    a2, a3, v1 = 6, 7, 3
+    code += [_i(0x0F, 0, a2, _hi(S["stamp"])), _i(0x09, a2, a2, S["stamp"]),              # a whole address in a2,
+             _i(0x28, a2, v1, 9), _i(0x28, a2, v0, 10)]                                    # sb 9(a2), sb 10(a2)
+    code += [_i(0x0F, 0, a0, _hi(S["copy"])), _i(0x09, a0, a0, S["copy"]),                # an inlined copy:
+             _i(0x22, a0, v0, 3), _i(0x26, a0, v0, 0), _i(0x20, a0, v1, 8)]               # lwl/lwr ... lb +8 (NUL)
+    code += [_i(0x0F, 0, a0, _hi(S["fmt"])), _i(0x09, a0, a0, S["fmt"])]
+    code += [_i(0x0F, 0, a0, _hi(S["weakpad"])), _i(0x09, a0, a0, S["weakpad"])]
+    code += [_i(0x0F, 0, a1, _hi(S["weakpad"] + 16)), _i(0x04, 0, 0, 2), 0,               # the fallback lui: an
+             _i(0x09, a1, a3, S["weakpad"] + 16)]                                         # object in the padding
     code += [_i(0x04, a0, a1, 2), _i(0x0F, 0, a0, _hi(S["slot"])),                        # lui in a delay slot
              _i(0x09, a0, a0, S["slot"])]
     code += [_i(0x0F, 0, 16, _hi(S["saved"])), 3 << 26, 0, _i(0x09, 16, a0, S["saved"])]  # s0 across a call
@@ -963,12 +1183,23 @@ def self_test() -> int:
             S["inner"]: (b"Hello World", 5, ["hilo"]), S["inner"] + 6: (b"World", 25, ["ptr"]),
             S["gp"]: (b"GP str", 15, ["gp"]), S["late"]: (b"\xa4\xa6Xy", 15, ["hilo"]),
             S["slot"]: (b"Delay", 15, ["hilo"]), S["saved"]: (b"Saved reg", 15, ["hilo"]),
-            S["arm"]: (b"Arm two", 15, ["hilo"]), S["ctl"]: (b"\x19\x03Card OK", 15, ["hilo"])}
+            S["arm"]: (b"Arm two", 15, ["hilo"]), S["ctl"]: (b"\x19\x03Card OK", 15, ["hilo"]),
+            S["stamp"]: (b"Path No. 01 done", 31, ["hilo"]), S["copy"]: (b"(Player)", 8, ["hilo"]),
+            S["fmt"]: (b"%d,%d items", 31, ["hilo"]), S["weakpad"]: (b"cdrom0:", 15, ["hilo"])}
     check(set(got) == set(want), "exactly the referenced strings are listed: lui in a delay slot, a saved register "
                                  "across a call, a use behind a label; not the unreferenced one, not past a return, "
                                  "not the font table, not after the register is rewritten")
     check(all(got.get(k) == v for k, v in want.items()), "slots run to the next non-zero byte or referenced address, "
                                                          "refs are pointer words, lui pairs and gp")
+    for k, v in want.items():
+        if got.get(k) != v:
+            print(f"      0x{k:08x}: got {got.get(k)}, want {v}")
+    bs = es.strings["SLUS_208.92"]
+    check(got[S["weakpad"]][1] == 15, "an address the fallback lui forms in a string's NUL padding ends its slot")
+    check([(k, n) for k, n, _ in bs[S["stamp"]].stamps] == [(9, 1), (10, 1)],
+          "sb 9(a2) / sb 10(a2) after lui+addiu a2: the code writes bytes +9 and +10 of the string")
+    check(bs[S["copy"]].copied == 9 and bs[S["copy"]].slot == 15 and bs[S["copy"]].max == 8,
+          "loads at fixed offsets up to the terminator (an inlined copy): max is the copy's size, not the slot")
     tree_txt = es.tree_text("SLUS_208.92")
     check(f"### @0x{S['pair']:08x} max 15 bytes\n# refs 1 (hilo 0x{TEXT_VA + 8:08x})\nSaving...\n" in tree_txt,
           "a block: header, refs comment, body")
@@ -997,7 +1228,11 @@ def self_test() -> int:
         check(rc == 0 and set(man["files"]) == {BOOT_TREE, "OV01.OVL.exe.txt"} and man["build"] == "us"
               and man["files"][BOOT_TREE]["name"] == "SLUS_208.92" and man["files"][BOOT_TREE]["role"] == "boot",
               "export writes the manifest and one tree file per executable")
-        check("BOOT.exe.txt (SLUS_208.92): 15 strings" in err, "export prints the count per file")
+        check("BOOT.exe.txt (SLUS_208.92): 19 strings" in err, "export prints the count per file")
+        bt0 = (tree / BOOT_TREE).read_text(encoding="utf-8")
+        check("# the code writes byte +9 (sb SLUS_208.92 0x" in bt0 and "# conversions: %d %d (keep them" in bt0
+              and "# the code copies the first 9 bytes of this string at fixed offsets" in bt0,
+              "the tree says where the code writes, what it copies, and which conversions to keep")
         changes, problems = plan(src, tree)
         check(changes == {} and problems == [], "an unedited tree changes nothing")
         rc, err = q(import_, src, tree, td / "none.iso")
@@ -1057,6 +1292,28 @@ def self_test() -> int:
         bt.write_text(pristine, encoding="utf-8")
         edit("\nZone\n", "\nZo\u27e600\u27e7e\n")
         check(refused("NUL"), "a NUL is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n%d,%d items\n", "\n%d,%s items\n")
+        check(refused("the %-conversions changed (exported: %d %d; now: %d %s)"), "a retyped conversion is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n%d,%d items\n", "\n%d,%d,%n\n")
+        check(refused("%-conversions changed"), "an added %n is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n%d,%d items\n", "\n%d of %x: 50%% off\n")
+        check(plan(src, tree)[1] == [], "reworded around the same conversions (%d -> %x reads the same int, %% "
+                                        "takes nothing) is accepted")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\nSaving...\n", "\n100% done\n")
+        check(refused("%-conversions changed"), "a string without conversions cannot gain one")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\nPath No. 01 done\n", "\nWeg Nr. 01 fertig\n")
+        check(refused("the code writes byte +9"), "an edit that moves the bytes the code stamps is refused")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\nPath No. 01 done\n", "\nWeg Nr.  01 fertig\n")
+        check(plan(src, tree)[1] == [], "an edit that keeps them at +9..+10 is accepted")
+        bt.write_text(pristine, encoding="utf-8")
+        edit("\n(Player)\n", "\n(Spieler)\n")
+        check(refused("slot holds max 8"), "longer than the inlined copy is refused")
         bt.write_text(pristine, encoding="utf-8")
         edit("\nZone\n", "\nZ\u3042\n")
         check(refused("cannot be written on the USA build"), "a typed Japanese character is refused")
