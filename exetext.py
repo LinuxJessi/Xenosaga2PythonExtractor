@@ -653,6 +653,11 @@ def _plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str],
         checker = _TypedCheck(iso, es)
         for name, exe in es.exes.items():
             tname, dname = disc_names[name]
+            if not (root / tname).exists():
+                # a tree may hold only the files it changes (as text-import's does); the others are
+                # still read from the disc above, because the three executables share addresses
+                log.append(f"{tname}: not in the tree, {dname} left as it is")
+                continue
             try:
                 with open(root / tname, encoding="utf-8-sig", newline="") as fh:
                     text = fh.read()
@@ -1064,6 +1069,11 @@ def self_test() -> int:
         ot.write_text(otext.replace("\nPlease wait.\n", "\nOne moment\n"), encoding="utf-8")
         ch, pr = plan(src, tree)
         check(pr == [] and set(ch) == {"OV01.OVL", "SLUS_208.92"}, "an overlay edit is planned beside the boot ELF's")
+        ot.write_text(otext, encoding="utf-8")
+        # a tree that holds only the file it changes (manifest + BOOT.exe.txt)
+        ot.unlink()
+        ch, pr = plan(src, tree)
+        check(pr == [] and set(ch) == {"SLUS_208.92"}, "a file left out of the tree leaves its executable as it is")
         ot.write_text(otext, encoding="utf-8")
         # Japan is refused
         jp = minidisc.build(td / "jp.iso", fonts, boot="SLPS_253.68", elf=boot)
