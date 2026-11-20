@@ -171,7 +171,9 @@ into both faces. It writes:
   the advance the encoder uses) and identical to each other in sheet 0;
 * `glyphset.json`: which glyph has which code; keep it with the project so
   later runs keep the same codes;
-* `langpack.json`: the shaping settings, one entry per script;
+* `langpack.json`: the shaping settings, one entry per script. It records
+  the TrueType file's full path: `lang-encode` and `lang-preview` shape the
+  text again and need that same font file (the same version) there;
 * `sheet0_preview.png`: sheet 0 with this run's new cells outlined.
 
 It prints the tier use, the glyph count per script, words whose characters
