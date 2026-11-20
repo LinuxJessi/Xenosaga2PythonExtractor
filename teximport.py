@@ -259,6 +259,11 @@ class Edit:
     orig: bytes
     source: str
     role: str = "edited"
+    twin: tuple = ()          # (fmt, x, y, w, h, bank, palx, paly): what the dup flag re-lists
+
+
+def _twin(e: dict) -> tuple:
+    return (e["fmt"], e["x"], e["y"], e["w"], e["h"], e["bank"], e["palx"], e["paly"])
 
 
 def _png_target(file: Path, w: int, h: int) -> Tuple[Optional[bytes], str]:
@@ -318,7 +323,7 @@ def _txy_job(args):
                                    f"CLUT pointer is 0xFFFFFFFF (FORMATS.md, the bogus E2_ELS01 entries)")
             continue
         out["edits"].append(Edit(chain, e.path, r.block_off, r.entry, en["name"], en["w"], en["h"], en["fmt"],
-                                 en.get("mip", 0), target, orig, str(r.file)))
+                                 en.get("mip", 0), target, orig, str(r.file), "edited", _twin(en)))
     return out
 
 
@@ -683,6 +688,13 @@ def _glb_job(args):
     chain, txy_path, file = args
     disc = _WORKER["disc"]
     out = {"edits": [], "problems": [], "unchanged": 0}
+    try:
+        images = read_gltf_images(Path(file))
+    except Exception as err:                         # a damaged file is a problem, not a crash
+        out["problems"].append(f"{file}: cannot read ({type(err).__name__}: {err})")
+        return out
+    if not images:                                   # exported untextured: nothing to bring back
+        return out
     e = disc.entry(chain, txy_path)
     if e is None:
         out["problems"].append(f"{file}: no texture page {txy_path!r} beside this model on the disc")
@@ -694,11 +706,6 @@ def _glb_job(args):
         out["problems"].append(f"{file}: {e.path}: {err}")
         return out
     decoded = {en["i"]: (en, rgba) for en, _w, _h, rgba in txy.decode_fast(data)}
-    try:
-        images = read_gltf_images(Path(file))
-    except Exception as err:                         # a damaged file is a problem, not a crash
-        out["problems"].append(f"{file}: cannot read ({type(err).__name__}: {err})")
-        return out
     names = [nm for nm, _b, _m in images]
     multi = len(t["banks"]) > 1
     stems = {Path(txy.entry_filename(x, multi)).stem for x in t["entries"]}
@@ -738,7 +745,7 @@ def _glb_job(args):
             out["problems"].append(f"{file}: image {k} maps to entry {i} ({en['name']}), refused (bogus entry)")
             continue
         out["edits"].append(Edit(chain, e.path, 0, i, en["name"], en["w"], en["h"], en["fmt"], en.get("mip", 0),
-                                 rgba, orig, f"{file}#image{k}({nm})"))
+                                 rgba, orig, f"{file}#image{k}({nm})", "edited", _twin(en)))
     return out
 
 
@@ -773,7 +780,8 @@ def _sweep_job(args):
                 continue
             sha = hashlib.sha1(rgba).hexdigest()
             if sha in shas:
-                hits.append((chain, path, off, e["i"], e["name"], sha, e["fmt"], e["w"], e["h"], e.get("mip", 0)))
+                hits.append((chain, path, off, e["i"], e["name"], sha, e["fmt"], e["w"], e["h"], e.get("mip", 0),
+                             _twin(e)))
     return hits
 
 
@@ -922,7 +930,7 @@ def _key(e: Edit):
 
 
 def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette="auto", dither="none",
-        sweep="pixels", mips="keep", grow=False, dry_run=False, preview=None, report=None,
+        sweep="pixels", mips="rebuild", grow=False, dry_run=False, preview=None, report=None,
         verify_roundtrip_=False, workers=None, _plan=None) -> int:
     if verify_roundtrip_:
         try:
@@ -1031,7 +1039,7 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
                 kk = (e.chain, e.path.lower(), e.block_off, x["i"])
                 if kk not in edits:
                     add[kk] = Edit(e.chain, e.path, e.block_off, x["i"], x["name"], x["w"], x["h"], x["fmt"], L,
-                                   img.tobytes(), dec[x["i"]], f"mip {L} of {e.source}", "mip")
+                                   img.tobytes(), dec[x["i"]], f"mip {L} of {e.source}", "mip", _twin(x))
         edits.update(add)
         if mip_note:
             print(f"note: {len(mip_note)} edited entries have +0x34 mip siblings "
@@ -1065,8 +1073,11 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
         by_sha: Dict[str, List[tuple]] = {}
         for k, e in edits.items():
             by_sha.setdefault(hashlib.sha1(e.orig).hexdigest(), []).append(k)
-        for chain, path, off, i, name, sha, fmt, w, h, mip in hits:
+        twins_of = {(e.chain, e.path.lower(), e.block_off, e.twin) for e in edits.values()}
+        for chain, path, off, i, name, sha, fmt, w, h, mip, tw in hits:
             kk = (chain, path.lower(), off, i)
+            if (chain, path.lower(), off, tw) in twins_of:
+                continue                     # a re-listed twin of an edit: it rides along in the encoder
             srcs = [s for s in by_sha.get(sha, []) if edits[s].w == w and edits[s].h == h]
             if not srcs or kk in edits:
                 continue
@@ -1182,6 +1193,13 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
         print("no texture changed; nothing written")
         return 0
     rep_path = report or (str(out) + ".textures.csv" if out else None)
+    too_big = _overflow(iso, replacements) if _is_path(iso) else []
+    for path, new, alloc in too_big:
+        print(f"{'note' if grow else 'refused'}: {path} recompresses to {new} bytes, its slot holds {alloc}"
+              + (" (moved to the end of the image: --grow)" if grow else "; pass --grow to move it to the end "
+                 "of the image (not yet seen in the running game)"), file=sys.stdout if grow else sys.stderr)
+    if too_big and not grow and not dry_run:
+        return 1
     if preview:
         _write_preview(Path(preview), iso, results, xtx_rows)
     if dry_run:
@@ -1205,6 +1223,18 @@ def run(iso, out=None, tree=None, textures=None, xtx=None, models=None, palette=
         return 1
     print(f"verified {len(replacements)} replaced files in {out} ({time.time() - t0:.0f} s)")
     return 0
+
+
+def _overflow(iso, replacements) -> List[Tuple[str, int, int]]:
+    """Objects that would not fit their slot (ARX objects are recompressed
+    first), found on the source image before anything is copied."""
+    import repack
+    img = IsoImage(iso)
+    try:
+        plan, _extra = repack._plan(img, replacements)
+    finally:
+        img.close()
+    return [(path, len(v[0]), v[3]) for (c, path), v in plan.items() if not v[4]]
 
 
 def _sweep_group(e: Edit, sweep: str) -> tuple:
@@ -1419,6 +1449,30 @@ def _self_test_plan(tmp: Path) -> List[Tuple[bool, str]]:
     with contextlib.redirect_stdout(io.StringIO()):
         rc = run(fake, tree=str(tmp / "browse"), dry_run=True, _plan=plan)
     out.append((rc == 0 and plan.get("replacements") == {}, "an unchanged tree plans zero replacements"))
+    # mip levels: an edited chain base rebuilds its +0x34 levels (same name, same palette)
+    pal_m = [(k * 4, 255 - k * 4, 128, 0x80) for k in range(64)] + [(0, 0, 0, 0)] * 192
+    blk_m = texenc._pal_block(128, [
+        {"name": "rock", "fmt": txy.PSMT8, "w": 16, "h": 16, "x": 0, "y": 0, "palx": 112, "paly": 0,
+         "mip": 0xFFFFFFFF, "_idx": [(x * 4) % 64 for y in range(16) for x in range(16)]},
+        {"name": "rock", "fmt": txy.PSMT8, "w": 8, "h": 8, "x": 16, "y": 0, "palx": 112, "paly": 0, "mip": 1,
+         "_idx": [(x * 8) % 64 for y in range(8) for x in range(8)]}], {(112, 0): pal_m})
+    fake_m = _FakeDisc({(0, "model\\m.txy"): blk_m})
+    dm = {e["i"]: r for e, _w, _h, r in txy.decode(blk_m)}
+    dmi = tmp / "mip" / "textures_png" / "chain0" / "model" / "m.txy"
+    dmi.mkdir(parents=True)
+    rock = np.frombuffer(dm[0], np.uint8).reshape(-1, 4).copy()
+    rock[:, :3] = rock[:, [2, 1, 0]]
+    txy.write_png(dmi / "000_rock.png", 16, 16, rock.tobytes())
+    plan = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc = run(fake_m, tree=str(tmp / "mip"), dry_run=True, _plan=plan)
+    roles = {r["entry"]: r["role"] for r in plan.get("rows", [])}
+    lvl, _w, _h = box_down(rock, 16, 16)
+    newm = plan.get("replacements", {}).get((0, "model\\m.txy"), b"")
+    got1 = {e["i"]: r for e, _w2, _h2, r in txy.decode(newm)}.get(1) if newm else None
+    out.append((rc == 0 and roles == {0: "edited", 1: "mip"} and got1 is not None
+                and texenc.psnr(lvl, np.frombuffer(got1, np.uint8).reshape(-1, 4)) > 30,
+                "an edited mip-chain base rebuilds its level-1 entry from the edit (box filter)"))
     _WORKER["disc"] = fake
     # path parsing
     p1, _ = parse_texture_path(("chain0", "model", "map", "x.txy", "007_sky_b4294967295_dup1.png"))
@@ -1569,8 +1623,9 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--sweep", choices=("pixels", "name", "none"), default="pixels",
                    help="also edit every other copy of the same pixels on the disc (pixels), only copies with the "
                         "same entry name (name), or nothing else (none)")
-    p.add_argument("--mips", choices=("keep", "rebuild"), default="keep",
-                   help="entries marked as smaller mip levels of an edited one: leave (keep) or rebuild from the edit")
+    p.add_argument("--mips", choices=("keep", "rebuild"), default="rebuild",
+                   help="smaller mip levels (+0x34) of an edited entry: rebuild them from the edit (default; the "
+                        "models' draw state asks the GS for those levels) or leave them as they are (keep)")
     p.add_argument("--grow", action="store_true",
                    help="let a compressed object that outgrows its slot move to the end of the image "
                         "(yajima\\titleobj.xtx; not yet seen in the running game)")

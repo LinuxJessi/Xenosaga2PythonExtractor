@@ -117,7 +117,10 @@ def cmd_dump(args) -> int:
                             head = bytes(block[:16])
                         h.update(block)
                         fh.write(block)
-            bigfile, local = reader.locate(e.byte_offset)
+            try:
+                bigfile, local = reader.locate(e.byte_offset)
+            except ValueError:                   # relocated past the chain by a --grow write
+                bigfile, local = "(relocated)", reader.toc_lba * 2048 + e.byte_offset
             rows.append({
                 "area": f"chain{chain}", "path": e.path, "sector": e.sector, "size": e.size,
                 "compressed": int(e.compressed), "usize": e.usize or "", "sha1": h.hexdigest(),
