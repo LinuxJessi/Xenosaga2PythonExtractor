@@ -1,5 +1,29 @@
 # Updates
 
+## 2026-11-20: new alphabets (`lang-scan`, `lang-encode`, `lang-preview`)
+
+Translations into scripts the USA font never had, ported from the Episode I
+kit (`glyphs.py`, `langpack.py`, each says so at the top) with the
+addressing rewritten for Episode II. [ALPHABETS.md](ALPHABETS.md).
+
+* **The room**, computed from the executable's reading of high bytes: 122
+  single-byte codes, 59 A4 pairs (both proportional) and 65 AD pairs (fixed
+  width), after reserving every cell the visible retail text uses (on the USA
+  discs only the lone byte FC). No kanji overflow as in Episode I.
+* **Both faces.** font1 is the face loaded at init (dialogue, menus,
+  battle); font0 is swapped in for movies and cfe cutscenes. Read from the
+  code; the old docstring "font0 is the dialogue face" was Episode I's.
+  Every glyph goes into both files, which stay identical in sheet 0.
+* **The encoder** works on the text-export tree, measures with the port of
+  the game's width function on the rebuilt font, re-emits colour and size
+  codes on right-to-left lines, handles several scripts in one project and
+  checks every byte limit (battle strings, executable strings, subtitles);
+  on any problem it writes nothing.
+* **fontTools and uharfbuzz are required** (requirements.txt), installed by
+  the launchers, checked by build.py and bundled by the app.
+* Checked on disc copies (Arabic and Hindi on Disc 1, the fonts and chain 0
+  on Disc 2). Not yet seen in the running game.
+
 ## 2026-11-10 (later): fixes from the translation review
 
 Four outside models reviewed the text work; every point and what was done is

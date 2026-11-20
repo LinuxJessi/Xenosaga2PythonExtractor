@@ -124,6 +124,11 @@ with the reason when
   kanji outside level 1 and the 87 the executable lists), its cell is out of
   the draw call's reach, or its glyph cell is blank in font0 or font1.
 
+Letters the font does not have (Arabic, Devanagari, Georgian, Ethiopic,
+Cyrillic, ...) cannot be typed straight into the tree: `lang-scan` draws them
+into the fonts first and `lang-encode` writes them as escapes, ordered and
+wrapped. See [ALPHABETS.md](ALPHABETS.md).
+
 An explicit `⟦XX⟧` escape is never checked. Unchanged strings are never
 checked. The retail text itself passes: retyped through this check, none of
 the 587 non-ASCII USA strings and none of the 15,536 Japanese ones would be

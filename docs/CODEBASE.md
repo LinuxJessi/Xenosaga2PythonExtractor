@@ -7,15 +7,18 @@ patching and mods in [MODDING.md](MODDING.md). This file is about the code.
 
 ## The design rules
 
-The Episode I kit's rules, kept (the first one with numpy added):
+The Episode I kit's rules, kept (the first one with three packages added):
 
-1. **Standard library, plus numpy.** Python 3.9 or newer and numpy
-   (`requirements.txt`), which the music renderer needs: a voice-by-voice
-   model of the SPU2 is too slow in pure Python. Everything else is the
-   standard library; the PNG, WAV and SoundFont writers are written out by
-   hand. ffmpeg (movies) is used when found and skipped when not. The app
-   bundles carry numpy and ffmpeg; the launchers install numpy into `.venv/`
-   on first run when the Python they find lacks it.
+1. **Standard library, plus numpy, fontTools and uharfbuzz.** Python 3.9 or
+   newer and the three packages of `requirements.txt`: numpy because a
+   voice-by-voice model of the SPU2 is too slow in pure Python, fontTools
+   and uharfbuzz because shaping Arabic or Devanagari for the font needs
+   real font outlines and HarfBuzz. They are required, never optional with
+   a worse fallback. Everything else is the standard library; the PNG, WAV
+   and SoundFont writers and the glyph rasteriser are written out by hand.
+   ffmpeg (movies) is used when found and skipped when not. The app bundles
+   carry the three packages and ffmpeg; the launchers install the packages
+   into `.venv/` on first run when the Python they find lacks any of them.
 2. **Every module stands alone.** `toc.py`, `arx.py`, `sb.py` and the rest
    import only what they need, so `from sb import parse` works in a
    throwaway script, and most double as scripts (`python sb.py FILE.sb`).
@@ -38,6 +41,7 @@ The Episode I kit's rules, kept (the first one with numpy added):
                             │                         spu2synth.py                  the PS2's music render
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
+                            ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py
                             └─ patch / recolor ─► repack.py, recolor.py
 ```
 
@@ -59,6 +63,9 @@ The Episode I kit's rules, kept (the first one with numpy added):
 | `sbl.py` | script text banks: parse, rebuild, edit |
 | `sb.py` | the script machine: parse, disassemble, check ([SCRIPTS.md](SCRIPTS.md)) |
 | `textpack.py` | dialogue as an editable UTF-8 tree, and back onto a disc copy |
+| `textcodec.py` | text bytes <-> editable text per build, and the check on typed characters |
+| `glyphs.py` | new glyphs into the USA fonts: the code tiers, allocation, rasterising with fontTools/uharfbuzz (from the Episode I kit, addressing rewritten; [ALPHABETS.md](ALPHABETS.md)) |
+| `langpack.py` | shaping, bidi order, wrapping and encoding of a translated tree in a new alphabet (from the Episode I kit) |
 | `vsf.py` | KORG sample banks to WAV |
 | `prj.py` | KORG projects: keys, programs, SoundFont 2 ([MUSIC.md](MUSIC.md)) |
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |
