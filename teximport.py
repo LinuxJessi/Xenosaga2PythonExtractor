@@ -848,7 +848,11 @@ def _pool_map(fn, jobs, iso_path, wanted=None, workers=None):
     jobs = list(jobs)
     if len(jobs) <= 2 or workers == 1 or not _is_path(iso_path):
         _init(iso_path, wanted)
-        return [fn(j) for j in jobs]
+        try:
+            return [fn(j) for j in jobs]
+        finally:                        # the image this call opened is closed again (Windows
+            if _is_path(iso_path):      # cannot move or delete a file that is still open)
+                _WORKER.pop("disc").close()
     with ProcessPoolExecutor(max_workers=workers or os.cpu_count() or 4, initializer=_init,
                              initargs=(iso_path, wanted)) as ex:
         return list(ex.map(fn, jobs, chunksize=max(1, min(16, len(jobs) // 64 or 1))))
@@ -1357,7 +1361,7 @@ def _write_report(path, rows):
     keys = ["chain", "path", "block_off", "entry", "name", "role", "source", "palette", "slots_changed",
             "pixels_changed", "psnr", "bytes_changed"]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as fh:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
         for r in rows:

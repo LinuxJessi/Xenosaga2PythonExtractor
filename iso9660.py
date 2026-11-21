@@ -133,5 +133,6 @@ class IsoImage:
         return len(self.mm)
 
     def close(self) -> None:
-        self.mm.close()
+        if not self.mm.closed:
+            self.mm.close()
         self._fh.close()

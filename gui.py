@@ -1167,7 +1167,8 @@ class Job:
         self._lock = threading.Lock()
         self._proc = subprocess.Popen(
             cmd, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
         )
         self.lines.append(f"$ {' '.join(shlex.quote(c) for c in cmd)}")
         threading.Thread(target=self._pump, daemon=True).start()
@@ -2283,8 +2284,9 @@ def self_test() -> int:
           and fsec[-1]["id"] == OTHER_GROUP and fsec[-1]["commands"] == ["frobnicate"]
           and fsec[0]["id"] == "start",
           "a command the tables lack lands in Other, its argparse help (escaped) as the summary")
-    check(build_argv(fc, {"iso": ["a.iso"], "out": ["/o"], "wide": [""]})[len(CLI_ARGV):]
-          == ["frobnicate", "--iso", "a.iso", "--out", "/o"] and output_path(fc, {"out": ["/o"]}) == str(Path("/o")),
+    absout = str(ROOT / "o")                            # absolute on every OS ("/o" is not on Windows)
+    check(build_argv(fc, {"iso": ["a.iso"], "out": [absout], "wide": [""]})[len(CLI_ARGV):]
+          == ["frobnicate", "--iso", "a.iso", "--out", absout] and output_path(fc, {"out": [absout]}) == absout,
           "its fields still build the command line, and its --out is where the output is shown")
     # an on/off pair of flags on one option (--rtl / --ltr): one three-way choice
     enc = find_command("lang-encode")
@@ -2317,7 +2319,7 @@ def self_test() -> int:
           and len({fl(c, "out")["prefill"] for c in ("text-export", "exe-export", "font-extract", "dialogue",
                                                       "lang-scan", "lang-encode")}) == 6,
           "each folder-writing card has its own subfolder, and each importer starts at its exporter's")
-    check(output_path(find_command("browse"), {"out": ["/x"]}) == str(Path("/x") / "browse")
+    check(output_path(find_command("browse"), {"out": [absout]}) == str(Path(absout) / "browse")
           and output_path(find_command("list"), {"iso": ["a"]}) is None,
           "the output shown after a run: browse -> OUT/browse, list -> nothing")
     with tempfile.TemporaryDirectory() as td:

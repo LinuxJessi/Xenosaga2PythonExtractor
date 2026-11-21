@@ -156,7 +156,7 @@ def cmd_dump(args) -> int:
                          "kind": sniff(data[:16], name), "disc": disc_number(iso),
                          "bigfile": "(iso fs)", "bigfile_offset": f.lba * 2048})
     out.mkdir(parents=True, exist_ok=True)
-    with open(out / "manifest.csv", "w", newline="") as fh:
+    with open(out / "manifest.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=MANIFEST_FIELDS)
         w.writeheader()
         w.writerows(rows)
@@ -172,7 +172,7 @@ def cmd_verify(args) -> int:
 
     out = Path(args.out)
     bad = checked = rearx = 0
-    with open(out / "manifest.csv") as fh:
+    with open(out / "manifest.csv", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             if row["area"] == "code":
                 p = out / "browse" / "code" / Path(*row["path"].split("\\"))
@@ -557,6 +557,9 @@ def cmd_self_test(args) -> int:
 
     rc = 0
     for name in SELF_TESTS:
+        if name == "gui" and getattr(sys, "frozen", False):
+            print("--- gui: in the app bundle the window runs its own --self-test")
+            continue
         try:
             mod = importlib.import_module(name)
         except ImportError as e:            # a missing module or requirement fails the run
@@ -573,7 +576,19 @@ def cmd_self_test(args) -> int:
     return rc
 
 
+def _utf8_output() -> None:
+    """Print UTF-8 whatever the console's code page is: the kit prints Arabic,
+    Devanagari and the game's ⟦NN⟧ escapes, which a cp1252 pipe on Windows
+    cannot encode."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None) -> int:
+    _utf8_output()
     ap = argparse.ArgumentParser(description="Xenosaga Episode II (USA) disc extractor")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

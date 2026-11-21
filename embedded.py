@@ -108,7 +108,7 @@ def sweep(out: Path, rows: List[dict], seen: Set[str], limit: Optional[int] = No
                     row["written"] = rel
                     row["duplicate_of"] = ""
                 result.append(row)
-    with open(out / "browse" / "embedded_textures.csv", "w", newline="") as fh:
+    with open(out / "browse" / "embedded_textures.csv", "w", newline="", encoding="utf-8") as fh:
         keys = ["container", "offset", "block_sha1", "entry", "name", "bank", "fmt", "w", "h",
                 "png_sha1", "file", "written", "duplicate_of"]
         w = csv.DictWriter(fh, fieldnames=keys)

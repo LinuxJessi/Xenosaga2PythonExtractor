@@ -371,7 +371,7 @@ def main(argv=None):
         rows = [sweep_one(f, a.glb) for f in files]
     report(rows)
     if a.json:
-        with open(a.json, "w") as f:
+        with open(a.json, "w", encoding="utf-8") as f:
             json.dump(rows, f, default=str, indent=1)
     return 0
 

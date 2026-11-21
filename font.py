@@ -891,7 +891,7 @@ def write_table(path: Path, addressing: "Addressing", font: Optional["Font"]) ->
     """The byte -> cell -> metric table as CSV, for $han1;$prop1; text (what the menus
     and dialogue set) and, in the mode column, for $han1;$prop0; too."""
     fields = ["mode", "byte", "kind", "code", "cell", "drawn_cell", "metric_slot", "left", "right", "advance"]
-    with open(path, "w", newline="") as fh:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()
         for prop in (True, False):
@@ -906,7 +906,7 @@ def cmd_extract(tex: str, out: str) -> int:
     stem = Path(tex).stem
     for i, sheet in enumerate(font.sheets):
         (outp / f"{stem}_sheet{i}.png").write_bytes(sheet_to_png(sheet))
-    with open(outp / f"{stem}_metrics.csv", "w", newline="") as fh:
+    with open(outp / f"{stem}_metrics.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         # slot = the cell number a character maps to; its proportional image is cell + 576
         w.writerow(["slot", "drawn_cell", "left", "right"])
@@ -945,7 +945,7 @@ def cmd_rebuild(ref: str, sheets_dir: str, out: str, metrics_csv: Optional[str],
     n_rows = n_changed = 0
     if metrics_csv:
         seen = set()
-        with open(metrics_csv, newline="") as fh:
+        with open(metrics_csv, newline="", encoding="utf-8") as fh:
             for row in csv.DictReader(fh):
                 try:
                     slot, left, right = int(row["slot"]), int(row["left"]), int(row["right"])

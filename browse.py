@@ -36,7 +36,7 @@ ALL_KINDS = ("textures", "models", "xtx", "fonts", "text", "scripts", "audio", "
 
 
 def _rows(out: Path) -> List[dict]:
-    with open(out / "manifest.csv") as fh:
+    with open(out / "manifest.csv", encoding="utf-8") as fh:
         return [r for r in csv.DictReader(fh) if r["area"] != "code"]
 
 
@@ -54,7 +54,7 @@ def _write_csv(path: Path, rows: List[dict]) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     keys = list(dict.fromkeys(k for r in rows for k in r))
-    with open(path, "w", newline="") as fh:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
         w.writerows(rows)
