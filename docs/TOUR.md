@@ -9,16 +9,18 @@ it was proven; this page only shows you the results.
 The kit ships no game data. You need your own copy of the discs, and everything
 below was produced from them.
 
-**Contents:** [Setup](#setup) · [Models](#models) · [Textures](#textures) ·
-[Menus and images](#menus-and-images) · [Fonts](#fonts) · [Dialogue](#dialogue) ·
-[Scripts](#scripts) · [Sound effects and music](#sound-effects-and-music) ·
-[Movies](#movies) · [Small files](#small-files) · [Changing the game](#changing-the-game) ·
-[The window](#the-window) · [Also in the kit](#also-in-the-kit)
+**Contents:** [Setup](#setup) · [Models](#models) · [Animation](#animation) ·
+[Textures](#textures) · [Menus and images](#menus-and-images) · [Fonts](#fonts) ·
+[Dialogue](#dialogue) · [Scripts](#scripts) ·
+[Sound effects and music](#sound-effects-and-music) · [Movies](#movies) ·
+[Small files](#small-files) · [Changing the game](#changing-the-game) ·
+[Another alphabet](#another-alphabet) · [Text coverage](#text-coverage) ·
+[The window](#the-window) · [Reproducing the demos](#reproducing-the-demos)
 
 ## Setup
 
 ```sh
-python -m pip install -r requirements.txt      # once: numpy
+python -m pip install -r requirements.txt      # once: numpy, fontTools, uharfbuzz
 python cli.py dump    --iso "Disc 1.iso" --iso "Disc 2.iso" --out out/ --code
 python cli.py verify  --out out/
 python cli.py browse  --out out/
@@ -90,7 +92,7 @@ people, `model/enemy/` the enemies and bosses, `model/robo/` the E.S. craft and
 
 <img src="images/gallery/E2_KUK06.jpg" width="480" alt="E2_KUK06"> <img src="images/gallery/E2_MIL12.jpg" width="480" alt="E2_MIL12">
 
-*`map/E2_KUK06` and `map/E2_MIL12`. More pictures are on the [front page](../README.md#gallery).*
+*`map/E2_KUK06` and `map/E2_MIL12`. More pictures are on the [front page](../README.md#models).*
 
 Things to know before you open one:
 
@@ -99,9 +101,36 @@ Things to know before you open one:
   **Bones** overlay if the importer's bone shapes look like balls. The steps are
   in [BLENDER.md](BLENDER.md).
 * The figures here stand in the bind pose. The motion clips come with each
-  model as animations ([MOTION.md](MOTION.md)).
+  model as animations ([next section](#animation)).
 * Maps include their sky domes. If a map looks boxed in or tiny, hide the
   biggest objects; `docs/gallery/render_gallery.py` shows one way.
+
+## Animation
+
+The motion files (`.xap` for the body, `.fap` for the face) are decoded, and
+each clip becomes one glTF animation on the model's armature, at 30 keys per
+second. `browse` adds the clips of the same name to every model (142 of the
+944 get motion); `model` takes more by path:
+
+```sh
+python cli.py model --iso "Disc 1.iso" --path 'model\char\pc\shion00.pxy' --out shion00.glb \
+       --motion 'motion\shion00.xap#0,1,2' --motion 'yamamoto\mot\shio00.xap#0,1' --face
+```
+
+<img src="images/front/motion-kosmos-shion-walk.gif" width="300" alt="KOS-MOS and Shion playing clip 1 of their field motion files">
+
+*KOS-MOS and Shion playing slot 1 of their field motion files
+(`motion/kosmos00#01`, `motion/shion00#01`), rendered in Blender from the
+kit's `.glb` files. The kit calls this clip walk-like; the game's names for
+the slots are not known.*
+
+In Blender, set the scene to 30 fps before importing, then pick a clip in the
+Dope Sheet's Action Editor. The names are the disc file and the slot
+(`motion/shion00#01`). All 4,340 clips on the disc decode. Hair, coats and
+skirts stay stiff, because the game simulates them and the kit does not, and
+none of this has been compared with the running game. A clip whose block
+counts differ from the skeleton's may belong to another model; its name ends
+in the counts (`[counts A30/55]`). Details in [MOTION.md](MOTION.md).
 
 ## Textures
 
@@ -359,6 +388,32 @@ colours each:
 The kit finds every copy of a texture by structure rather than by bytes, because
 the game stores KOS-MOS's hair in several files at different offsets.
 
+### Paint textures and put them back
+
+```sh
+cp -R out/browse edited/                                            # paint PNGs in the copy
+python cli.py texture-import --iso "Disc 1.iso" --tree edited/ --dry-run
+python cli.py texture-import --iso "Disc 1.iso" --tree edited/ --out modded.iso --preview prev/
+```
+
+Paint over any PNG `browse` wrote: a texture page, a UI sheet, or an image
+inside a model's `.glb` after a trip through Blender. `texture-import` writes
+only the pictures that changed, into every copy of the same picture on the
+disc (KOS-MOS's hair is in four files), keeps shared palettes intact for the
+other textures, and decodes every write again from the new image before the
+copy gets its name. The `--dry-run` lists each swept group, so you see what
+one edit reaches.
+
+<img src="images/front/texture-kosmos-full.jpg" alt="KOS-MOS from the retail disc and from the modded copy, front and back">
+
+<img src="images/front/texture-title-menu.png" width="560" alt="The title menu sheet, retail and tinted gold">
+
+*Re-extracted from the modded copy of Disc 1 and rendered in Blender: the hair
+band, the green arm texture and a ring painted on her chest texture through a
+`.glb`; and the title menu sheet tinted gold. Checked on the disc copy (every
+unrelated object byte-identical); not yet booted in PCSX2. The rules are in
+[MODDING.md](MODDING.md#editing-textures-texture-import).*
+
 ### Edit the text
 
 ```sh
@@ -368,10 +423,32 @@ python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
 ```
 
 `text-import` says which limit an edit broke: menu and quest text may not need
-more disc sectors than the original, battle strings may not get longer, and
+more disc sectors than the original, each quest text must fit its field,
+battle strings may grow within the file's sectors (the rest of their section
+moves down), subtitles must stay inside what the retail subtitles reach, and
 dialogue banks can grow with `--grow`. It refuses a tree that came from another
 disc, never writes over its input, and gives you a complete image or none. The
 rules, and what was checked in an emulator, are in [MODDING.md](MODDING.md).
+
+### Strings in the game's code
+
+A few strings the game shows live in the executables, not in text files:
+`Saving...`, the memory-card and disc-change prompts, `Total Exp`.
+
+```sh
+python cli.py exe-export --iso "Disc 1.iso" --out exe/
+python cli.py exe-import --iso modded.iso --text exe/ --out final.iso     # run last
+```
+
+```
+### @0x0068b678 max 15 bytes
+Saving...
+```
+
+Each string is rewritten in place, at most the `max N` bytes its header gives.
+Run `exe-import` last: afterwards the executable is no longer the retail one
+and the other text commands refuse the image
+([MODDING.md](MODDING.md#executable-strings-exe-export--exe-import)).
 
 ### Replace any file
 
@@ -379,28 +456,92 @@ rules, and what was checked in an emulator, are in [MODDING.md](MODDING.md).
 python cli.py patch --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
 ```
 
+## Another alphabet
+
+The USA font has Latin letters only, so the kit draws a new script's glyphs
+into it. Translate the exported tree as you would type it, then:
+
+```sh
+python cli.py lang-scan   --iso "Disc 1.iso" --text tr/ --font NotoNaskhArabic.ttf \
+    --script Arab --language ar --rtl --out fonts/
+python cli.py lang-encode --text tr/ --glyphset fonts/glyphset.json --out tr-enc/ --width-kind bank=410
+python cli.py lang-preview --glyphset fonts/glyphset.json --text "[Canaan]ما هذا الشيء؟" --out line.png
+```
+
+`lang-scan` shapes every string with HarfBuzz, gives each glyph a free cell
+and draws it into both fonts; `lang-encode` writes the tree back with the
+glyphs as codes, right-to-left lines reordered and wrapped, every byte limit
+checked; `patch` (the two fonts) and `text-import` put it on a copy of each
+disc. The room is 246 codes.
+
+<img src="images/front/lang-new-cells.png" width="420" alt="The 144 glyph cells drawn for the LANGTEST disc">
+
+*The 144 cells `lang-scan` drew for the LANGTEST test disc: Arabic,
+Devanagari, Georgian and Ethiopic.*
+
+<img src="images/front/lang-preview-lines.png" width="470" alt="lang-preview output for four lines">
+
+*`lang-preview` of four of its lines, drawn with the rebuilt font.*
+
+That disc was played in PCSX2. Arabic in the field box, Hindi in movie
+subtitles and real-time cutscenes, and Amharic on the save screen were drawn
+by the game:
+
+<img src="images/ingame-xs2-arabic-box.png" width="320" alt="Arabic in the field box"> <img src="images/ingame-xs2-hindi-movie.png" width="320" alt="Hindi subtitle in the opening movie">
+
+The field menu's party names drew blank, and the battle screen was not
+reached. The whole procedure, the captures and what failed:
+[ALPHABETS.md](ALPHABETS.md).
+
+## Text coverage
+
+```sh
+python cli.py text-coverage --iso "Disc 1.iso" --iso "Disc 2.iso" --verify
+```
+
+lists every place the game shows text and what the kit does with it, counted
+from your discs. The start of its output:
+
+```
+[editable] dialogue and scene text (USA: one bank per scene or map): 465 file(s), 9699 string(s)
+[editable] menus, item/skill/location names, help text, database, the Skill Tutorial: 3 file(s), 903 string(s)
+[editable] battle names and descriptions: party, enemies, skills, items, equipment, messages: 1 file(s), 1085 string(s)
+[editable] quest, citizen and treasure text: 6 file(s)
+[editable] movie subtitles: 45 file(s)
+[in place] the save's title in the PS2 memory-card browser: 1 file(s), 1 string(s)
+[editable] battle banners: the enemy skill and action names a battle shows (bat.namePut): 1363 call(s), 416 distinct string(s) in 113 bank(s)
+[in place] strings in SLUS_208.92 (boot ELF): 3498 strings
+```
+
+*(One line per kind shown; the real output adds where each lives and its
+limits, then the words drawn into pictures and movies.)* `--verify` exports
+every text and executable string and checks that the unedited trees import
+as no change on each disc. The full table is in
+[MODDING.md](MODDING.md#what-is-covered-text-coverage).
+
 ## The window
 
 Prefer clicking to typing? `python gui.py`, or double-click `launch.command` on a
 Mac (`launch.bat` on Windows, `launch.sh` on Linux). It opens a local page with
-one card per command above. The cards are built from the command line itself, so
-new commands appear on their own.
+one card per command, 22 in all. The cards are built from the command line
+itself, so new commands appear on their own.
 
-## Also in the kit
+<img src="images/front/gui-window.png" alt="The kit's window with the dump card open">
 
-Merged after this tour was written; each has its own page, and the tour has no
-section with pictures for them yet.
+*The disc paths in this screenshot are example names.*
 
-* **Motion**: the animation clips (`.xap`, `.fap`) come with every model as
-  Blender animations ([MOTION.md](MOTION.md)).
-* **New alphabets and executable strings**: `lang-scan`, `lang-encode` and
-  `lang-preview` for scripts the USA font never had, and `exe-export` /
-  `exe-import` for the strings inside the executable. A test disc with Arabic,
-  Hindi, Georgian and Amharic was booted in PCSX2; one surface failed and one
-  was not reached ([ALPHABETS.md](ALPHABETS.md), [MODDING.md](MODDING.md)).
-* **Text coverage**: `text-coverage` lists every place the game shows text and
-  what the kit does with it; control-code prompts, quest fields and the
-  memory-card title are editable ([MODDING.md](MODDING.md)).
-* **Texture import**: `texture-import` puts edited PNGs, UI sheets and model
-  images back into a copy of the disc. Checked on disc copies, not yet seen in
-  the running game ([MODDING.md](MODDING.md#editing-textures-texture-import)).
+## Reproducing the demos
+
+The demos on this page and on the front page are scripts in `tools/`, each
+taking the disc images and output folders as arguments:
+
+```sh
+tools/langtest/langtest.sh "Disc 1.iso" langtest/                 # the LANGTEST disc, built and checked
+tools/demo/motion.sh "Disc 1.iso" out/dump/ demo-motion/          # the motion exports and their checks
+tools/demo/texture-import.sh "Disc 1.iso" out/ demo-textures/      # the texture demo on a disc copy
+```
+
+What each needs is at the top of the script and in [CODEBASE.md](CODEBASE.md).
+The Blender scripts behind the pictures are in [`gallery/`](gallery/):
+`render_gallery.py` (the gallery), `render_motion_preview.py` (the walking
+loop) and `render_bind_pose.py` (the texture before and after).

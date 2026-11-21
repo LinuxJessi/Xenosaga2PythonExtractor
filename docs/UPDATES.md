@@ -1,5 +1,45 @@
 # Updates
 
+## 2026-11-20 (release): the front page for everything
+
+The README is rebuilt as a front page for the whole kit: a feature table with
+every command and its page, and sections with pictures for models, animation,
+changing textures, translating, text coverage, audio, movies, fonts and menus,
+and the window. "Still open" is brought up to date, and there is a docs index
+and a credits section. The tour gets sections for animation, texture import,
+executable strings, another alphabet and text coverage, a screenshot of the
+window, and a list of the demo scripts in place of its "Also in the kit" list.
+
+* **New pictures** in `docs/images/front/` (about 1 MB), all from the kit's
+  own output: KOS-MOS and Shion playing clip 1 of their field motion files
+  (a 12-frame GIF rendered in Blender from the `.glb` files); KOS-MOS and
+  the title menu sheet from the retail disc and from the texture demo's
+  modded copy, re-extracted; the 144 glyph cells `lang-scan` drew for the
+  LANGTEST disc and four of its `lang-preview` lines; and the window
+  (`gui.py`, with example disc paths in place of local ones). The
+  in-game captures are the LANGTEST ones already in `docs/images/`.
+* **Render scripts** for the new pictures: `docs/gallery/render_motion_preview.py`
+  and `docs/gallery/render_bind_pose.py`, beside `render_gallery.py`.
+* **Fixed:** the gallery caption said the figures stand in the bind pose
+  because the motion files are not decoded; they are decoded, and the
+  gallery simply shows the bind pose. The tour still said battle strings may
+  not get longer; on the USA discs they grow within the file's sectors.
+* **Checked again on the release branch** before writing the page: the
+  LANGTEST build is byte-identical to the booted image and its verifier
+  passes; the motion demo, the Khronos validator, Blender's import check and
+  a full `browse --kinds models` (944 written, 142 with motion, the known
+  `mobj241` facing flag) pass; the texture demo's checks pass and
+  `--verify-roundtrip` is byte-exact on both USA discs; `text-coverage
+  --verify` passes on both discs, and an edit of one string of every kind
+  round-trips on a copy of Disc 1 (15 changed sectors, all in the edited
+  files and the tables of contents). None of it was booted again.
+* **Noticed, not changed:** in `text-coverage --verify`, if `exe-export`
+  itself fails, the executable no-change check is skipped without a
+  problem being recorded (it did not fail in these runs). The coverage
+  table still calls the UI sheets and the title menu words "export only"
+  and says there is no PNG-to-XTX import; `texture-import` writes the
+  title sheet and the sheets whose palette is solved.
+
 ## 2026-11-20 (night): one release branch, build and demo scripts in the repository
 
 The language suite, text coverage, motion and texture import are merged on
