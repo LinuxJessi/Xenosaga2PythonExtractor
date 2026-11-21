@@ -1,5 +1,25 @@
 # Updates
 
+## 2026-11-21: the texture demo's hair is pink all over
+
+* **The demo painted a stripe, not the hair.** `tools/demo/textures/paint.py`
+  put a diagonal magenta band on `kosmos00_hair_col`, so the front-page
+  renders showed KOS-MOS with blue hair and pink stripes. It now turns the
+  whole hair pink: the hair picture, its shine (`kosmos00_hair_spe`) and the
+  blue hair drawn on her three face pictures (`kosmos00_face`,
+  `kosmos01_face`, `kosmos03_face`), skin, lips and eyes untouched. The demo
+  was run again on a copy of USA Disc 1: 18 changed entries (8 edited,
+  3 ride-along, 7 swept) in 5 files, every check passes, and the front-page
+  and tour pictures are new renders of the re-extracted model. Still not
+  booted in PCSX2.
+* **`recolor`'s `blue` mode left a blue-grey outline** where a face's painted
+  hair fades into skin. It now also takes that cool soft edge (blue no more
+  than 30 under red and not green) and gives it some saturation, so the
+  `kosmos-hair` preset changes about 600 colours per file instead of 570.
+  The preview picture in the tour is new.
+* **[TOUR](TOUR.md#reproducing-the-demos)** lists the demo step by step, with
+  the lines to expect and the Blender command for the pictures.
+
 ## 2026-11-20 (v1.0.1): easier on Windows
 
 * The Windows zip unpacks into one folder with a `START HERE.txt` (which

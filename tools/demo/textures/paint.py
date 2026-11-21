@@ -5,8 +5,15 @@ usage: paint.py EDITED_DIR BROWSE_DIR [BROWSE_DIR ...]
 Reads only files from the BROWSE_DIRs (`cli.py browse` outputs of the retail disc) and writes
 the edited copies, at the same relative paths, under EDITED_DIR (a sparse tree):
 
-1. textures_png/chain0/model/char/pc/kosmos00.txy/000_kosmos00_hair_col.png
-   KOS-MOS's hair: a bright magenta diagonal band over the opaque pixels.
+1. KOS-MOS's hair, all of it pink (hue 0.92, the `recolor` command's default), in three steps:
+   textures_png/chain0/model/char/pc/kosmos00.txy/000_kosmos00_hair_col.png   the hair itself
+   textures_png/chain0/model/char/pc/kosmos00.txy/001_kosmos00_hair_spe.png   its shine
+   the face pictures 024_kosmos00_face (kosmos00.txy), 007_kosmos01_face (kosmos01.txy) and
+   009_kosmos03_face (kosmos03.txy): only their blue pixels (the fringe, the sideburns, the
+   forehead marks and the brows); skin, lips and eyes stay as they are.
+   The two hair pictures are painted once, in kosmos00.txy; `texture-import` carries them to
+   her three other files, which hold the same pictures. Each of her three face pictures is a
+   different drawing, so each is painted (kosmos02.txy holds a copy of kosmos01's).
 2. textures_png/chain0/model/char/pc/kosmos00.txy/005_kosmos00_ude.png
    an outfit texture (arm pieces), recoloured green: hue 0.33, saturation at least 0.5.
 3. xtx/chain0/yajima/titleobj.xtx.png  (the title menu words, a UI sheet)
@@ -44,14 +51,33 @@ def save(rel, a):
     p.write_bytes(txy.png_bytes(a.shape[1], a.shape[0], a.tobytes()))
 
 
-T = Path("textures_png/chain0/model/char/pc/kosmos00.txy")
-# 1. hair: magenta band
-a = load(T / "000_kosmos00_hair_col.png")
-yy, xx = np.mgrid[0:a.shape[0], 0:a.shape[1]]
-band = (((xx - 2 * yy) % 64) < 14) & (a[..., 3] > 0)
-a[band, :3] = (255, 0, 255)
-save(T / "000_kosmos00_hair_col.png", a)
-print("hair_col: magenta band over", int(band.sum()), "pixels")
+PC = Path("textures_png/chain0/model/char/pc")
+T = PC / "kosmos00.txy"
+PINK = 0.92                                         # the hue `cli.py recolor` uses by default
+
+
+def pink(rel, only_blue):
+    """Turn the hue of a picture's visible pixels to PINK, lightness kept. only_blue: just the
+    pixels that are not warm (the hair painted on a face and its soft edge), not the skin."""
+    a = load(rel)
+    f = a.reshape(-1, 4)
+    n = 0
+    for p in np.nonzero(f[:, 3] > 0)[0]:
+        h, l, s = colorsys.rgb_to_hls(*(f[p, :3] / 255.0))
+        if only_blue and int(f[p, 2]) < int(f[p, 0]) - 30:     # warm (skin, lips): red far above blue
+            continue
+        f[p, :3] = [int(round(v * 255)) for v in colorsys.hls_to_rgb(PINK, l, min(1.0, max(s * 1.5, 0.35)))]
+        n += 1
+    save(rel, a)
+    return n
+
+
+# 1. hair: all pink (the hair, its shine, and the hair painted on her three face pictures)
+print("hair_col: pink over", pink(T / "000_kosmos00_hair_col.png", False), "pixels")
+print("hair_spe: pink over", pink(T / "001_kosmos00_hair_spe.png", False), "pixels")
+for rel in (T / "024_kosmos00_face.png", PC / "kosmos01.txy" / "007_kosmos01_face.png",
+            PC / "kosmos03.txy" / "009_kosmos03_face.png"):
+    print(f"{rel.stem[4:]}: pink over", pink(rel, True), "blue pixels")
 # 2. ude: green
 a = load(T / "005_kosmos00_ude.png")
 f = a.reshape(-1, 4)

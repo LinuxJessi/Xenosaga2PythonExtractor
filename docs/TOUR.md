@@ -384,7 +384,7 @@ python cli.py recolor --iso "Disc 1.iso" --out pink.iso                 # KOS-MO
 ```
 
 `--dry-run --preview` writes a before and after PNG for every texture it would
-change and touches no disc. On Disc 1 it finds 12 entries in 4 files, about 570
+change and touches no disc. On Disc 1 it finds 12 entries in 4 files, about 600
 colours each:
 
 <img src="images/tour/recolor_preview.png" alt="KOS-MOS hair and face textures, blue before and pink after">
@@ -414,8 +414,8 @@ one edit reaches.
 
 <img src="images/front/texture-title-menu.png" width="560" alt="The title menu sheet, retail and tinted gold">
 
-*Re-extracted from the modded copy of Disc 1 and rendered in Blender: the hair
-band, the green arm texture and a ring painted on her chest texture through a
+*Re-extracted from the modded copy of Disc 1 and rendered in Blender: the pink
+hair, the green arm texture and a ring painted on her chest texture through a
 `.glb`; and the title menu sheet tinted gold. Checked on the disc copy (every
 unrelated object byte-identical); not yet booted in PCSX2. The rules are in
 [MODDING.md](MODDING.md#editing-textures-texture-import).*
@@ -556,6 +556,29 @@ tools/demo/texture-import.sh "Disc 1.iso" out/ demo-textures/      # the texture
 ```
 
 What each needs is at the top of the script and in [CODEBASE.md](CODEBASE.md).
+
+The texture demo, step by step, for the KOS-MOS pictures above (Disc 1, a
+full `dump` of it in `out/`, about 6 GB free, some minutes):
+
+1. `tools/demo/texture-import.sh "Disc 1.iso" out/ demo-textures/`. Its paint
+   step (`tools/demo/textures/paint.py`) turns her hair pink all over: the
+   hair picture `000_kosmos00_hair_col`, its shine `001_kosmos00_hair_spe`,
+   and the blue hair drawn on her three face pictures. It also turns her arm
+   texture green, paints a ring on her chest through the `.glb`, and tints
+   the title menu gold.
+2. Read the end of the output: `plan: 18 changed entries (8 edited,
+   3 ride-along, 7 swept) in 5 files`, then `ALL PASS (collect)`,
+   `ALL PASS (disc)`, `PASS: unedited full tree` and
+   `PASS: retail Disc 1 unchanged`.
+3. Look at `demo-textures/contact_sheet.png` (every changed picture, before
+   and after). No blue may be left in the hair rows or along the hairline of
+   the faces.
+4. Render the model from the retail disc and from the modded copy:
+   `blender -b --factory-startup --python docs/gallery/render_bind_pose.py -- renders/ demo-textures/kosmos00.before.glb demo-textures/kosmos00.after.glb`
+   writes a front and a back view of each; the pictures above set them side
+   by side.
+5. The modded disc is `demo-textures/discs/xs2-d1-textures.iso` (4.4 GB).
+   Booting it in PCSX2 is the one check still open.
 The Blender scripts behind the pictures are in [`gallery/`](gallery/):
 `render_gallery.py` (the gallery), `render_motion_preview.py` (the walking
 loop) and `render_bind_pose.py` (the texture before and after).

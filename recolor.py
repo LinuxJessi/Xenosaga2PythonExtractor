@@ -65,7 +65,11 @@ def _rot(r, g, b, hue, smin=0.0, sboost=1.1, lboost=1.0):
 
 
 def _is_blue(r, g, b):
-    return (b > 140 and b > r + 40 and g > r) or (b > 90 and b > r + 30 and b >= g)
+    """Blue, or the cool soft edge where painted hair fades into skin (blue
+    no more than 30 under red and not green): without the edge a recoloured
+    fringe keeps a blue-grey outline. Skin and lips have red far above blue."""
+    return ((b > 140 and b > r + 40 and g > r) or (b > 90 and b > r + 30 and b >= g)
+            or (b > r - 30 and b >= g - 12))
 
 
 # ------------------------------------------------------------ locating bytes
@@ -163,7 +167,7 @@ def apply(data: bytes, hits: List[Hit], hue: float) -> Tuple[bytes, int]:
             buf[o:o + 3] = bytes(_rot(r, g, b, hue, 0.35, 1.5, 1.12))
             edits += 1
         elif mode == "blue" and _is_blue(r, g, b):
-            buf[o:o + 3] = bytes(_rot(r, g, b, hue))
+            buf[o:o + 3] = bytes(_rot(r, g, b, hue, 0.3, 1.3))
             edits += 1
     return bytes(buf), edits
 

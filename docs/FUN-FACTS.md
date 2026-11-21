@@ -160,7 +160,7 @@ are in [FINDS.md](FINDS.md) (leftovers) and [HISTORY.md](HISTORY.md)
 * **About one triangle in thirty is stored facing backwards**, so the kit
   orients faces by their normals and makes materials double-sided.
 * **The texture files keep the artists' names:** `shion00_hair`,
-  `kosmos00_face`. KOS-MOS's hair band is in four different files, each with
+  `kosmos00_face`. KOS-MOS's hair is in four different files, each with
   its palette somewhere else, which is why one paint job has to reach all
   four.
 * **All 4,340 motion clips decode**, in 550 files, at 30 keys a second.

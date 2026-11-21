@@ -102,7 +102,7 @@ folders as arguments and runs the kit from the repository it sits in.
 | `tools/langtest/langtest.sh` | builds the LANGTEST disc from the retail Disc 1 with kit commands only, then runs `langtest-verify.py` on it ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)) |
 | `tools/langtest/langtest-verify.py` | the read-back checks: encoded strings, untouched strings, font cells |
 | `tools/demo/motion.sh` | the motion demo: three models with clips, read-back checks and contact sheets (`motion/make_demo.py`), the Khronos validator and Blender when present ([MOTION.md](MOTION.md)) |
-| `tools/demo/texture-import.sh` | the texture demo: `textures/paint.py` edits four pictures, `texture-import` writes them onto a copy, `textures/checks.py` re-extracts and checks ([MODDING.md](MODDING.md#editing-textures-texture-import)) |
+| `tools/demo/texture-import.sh` | the texture demo: `textures/paint.py` paints KOS-MOS's hair pink (the hair, its shine, the hair on her three face pictures) and edits three more pictures, `texture-import` writes them onto a copy, `textures/checks.py` re-extracts and checks ([MODDING.md](MODDING.md#editing-textures-texture-import)) |
 
 ## The GUI reads the CLI
 

@@ -108,7 +108,7 @@ def collect(a):
     ims = {n: b for n, b, _m in teximport.read_gltf_images(rx)}
     old = {n: b for n, b, _m in teximport.read_gltf_images(rb)}
     edi = {n: b for n, b, _m in teximport.read_gltf_images(ed)}
-    for n in ("000_kosmos00_hair_col", "005_kosmos00_ude", "009_kosmos00_mune"):
+    for n in ("000_kosmos00_hair_col", "024_kosmos00_face", "005_kosmos00_ude", "009_kosmos00_mune"):
         png = find(a.after, Path("textures_png/chain0/model/char/pc/kosmos00.txy") / f"{n}.png")
         x = pngread.read_png(ims[n])[2]
         verdict(x == pngread.read_png(png.read_bytes())[2] and x != pngread.read_png(old[n])[2],

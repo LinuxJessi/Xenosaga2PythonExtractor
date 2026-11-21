@@ -207,15 +207,16 @@ entries must show the planned picture, every other entry its original.
 
 ![KOS-MOS from the retail disc and from the modded copy, front and back, rendered in Blender after re-extracting the copy](docs/images/front/texture-kosmos-full.jpg)
 
-<img src="docs/images/front/texture-kosmos-closeup.jpg" width="640" alt="Close-up: the magenta hair band, the green arms and the yellow ring on her chest">
+<img src="docs/images/front/texture-kosmos-closeup.jpg" width="640" alt="Close-up: the pink hair, the green arms and the yellow ring on her chest">
 
 <img src="docs/images/front/texture-title-menu.png" width="560" alt="The title menu sheet, retail and with the words tinted gold">
 
 *Both are re-extracted from the modded copy of Disc 1, not from the edited
-files: the hair band (in all four of her texture files), the arm texture and
+files: the hair turned pink (the hair, its shine and the hair drawn on her face
+pictures, in all four of her texture files), the arm texture and
 a ring painted on her chest texture through a `.glb` round trip, and the title
 menu sheet `yajima\titleobj.xtx` tinted gold. `tools/demo/texture-import.sh`
-makes this copy (the renders: [docs/gallery/render_bind_pose.py](docs/gallery/render_bind_pose.py)); its checks pass (10 changed entries in 5 files, every
+makes this copy (the renders: [docs/gallery/render_bind_pose.py](docs/gallery/render_bind_pose.py)); its checks pass (18 changed entries in 5 files, every
 unrelated object byte-identical), and `--verify-roundtrip` re-encodes all
 69,482 texture entries and 73 UI sheets of each USA disc byte-identically.
 The copy has not yet been booted in PCSX2.*

@@ -45,8 +45,9 @@ python cli.py recolor --iso pink.iso --out pink2.iso --xtx 'yajima\titleobj.xtx'
 A texture is named by its `.txy` entry, the names the artists gave them
 (`kosmos00_hair_col`, `shion00_face`; `browse` writes them as file names).
 `--rule GLOB=MODE` picks entries; `all` sets the hue of every colour of the
-entry's palette, `blue` only of its blue colours (for faces: the skin stays,
-a blue fringe changes). The preset `kosmos-hair` is
+entry's palette, `blue` only of its blue colours and of the cool soft edge
+where they fade into skin (for faces: the skin stays, a blue fringe changes
+and keeps no blue-grey outline). The preset `kosmos-hair` is
 `kosmos*_hair_col=all`, `kosmos*_hair_spe=all`, `kosmos*_face=blue`.
 
 **Every copy is found by structure, not by bytes.** The command parses every
@@ -57,7 +58,7 @@ that entry reads, wherever that tile sits in that file. KOS-MOS's hair is
 `02` and `03`, at four different palette positions, so a byte search for one
 palette finds one copy. (Episode III's kit learned the same lesson: costume
 variants carry re-baked palettes.) Result for the preset on Disc 1: 12
-entries in 4 files, about 570 colours each, all patched in place.
+entries in 4 files, about 600 colours each, all patched in place.
 
 `--xtx PATH` colourises a true-colour `.xtx` sheet instead (no palette;
 every visible pixel takes the hue with lifted saturation, so white text
@@ -214,8 +215,9 @@ standalone pages, 2,167 embedded pages (69,482 entries) and 73 UI sheets, no
 failure, 55 seconds. A no-op run over the whole `browse` output (114,583 PNGs
 and model images) takes 26 seconds and writes nothing.
 
-**Not yet seen in the running game.** The demo (KOS-MOS's hair with a magenta
-band in all four of her texture files, her arm texture in green, a ring on
+**Not yet seen in the running game.** The demo (KOS-MOS's hair pink all over
+in all four of her texture files: the hair, its shine and the hair drawn on
+her three face pictures; her arm texture in green, a ring on
 her chest texture through a `.glb`, and the title menu words tinted) is
 written and verified on disc copies only; the PCSX2 boot check is pending.
 `tools/demo/texture-import.sh "Disc 1.iso" out/ demo-textures/` runs it from
