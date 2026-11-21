@@ -197,12 +197,22 @@ class Tiers:
         return out
 
 
+def _sjis_reading(s: bytes) -> str:
+    """The Shift-JIS reading of ``s`` when it decodes and has a non-ASCII character, else ''.
+    This was textpack's ``_sjis_hint`` when the reserve was computed; textpack's hint is now
+    stricter (``_jp_hint``), and the reserve keeps this rule so the room stays the same."""
+    try:
+        t = s.decode("shift_jis")
+    except UnicodeDecodeError:
+        return ""
+    return t if any(ord(c) > 0x7F for c in t) else ""
+
+
 def visible_retail(s: bytes) -> bool:
     """False for the strings the retail reserve leaves out as developer lines the
-    player never sees: those ``textpack._sjis_hint`` flags (Shift-JIS) and those that
+    player never sees: those that read as Shift-JIS (``_sjis_reading``) and those that
     decode as EUC-JP with kana or kanji other than the five retail symbols A4A1-A4A5."""
-    from textpack import _sjis_hint
-    if _sjis_hint(s):
+    if _sjis_reading(s):
         return False
     cleaned = s
     for t in range(0xA1, 0xA6):
@@ -218,7 +228,7 @@ def retail_reserve(iso_path: str, adr: "fontmod.Addressing", candidates: Set[int
                    ) -> Dict[int, Tuple[int, str]]:
     """cell -> (uses, an example) for every candidate cell that the visible retail
     text of the disc reaches: every string of the kinds bank, menu and battle and every
-    subtitle cue line, skipping strings ``textpack._sjis_hint`` flags (Shift-JIS
+    subtitle cue line, skipping strings that read as Shift-JIS (``_sjis_reading``,
     developer lines) and strings that decode as EUC-JP with kana or kanji other than
     the five retail symbols A4A1-A4A5."""
     import sbl
