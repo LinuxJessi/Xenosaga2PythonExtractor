@@ -49,7 +49,12 @@ the same build: chain 0 is the same there and each object is still checked.
 * bank: strings grow and shrink, the bank is rebuilt. It may leave its slot
   only with ``grow`` and never past the room its loader has (``bank_budget``,
   USA only: the rule is read from the USA executable).
-* inline, battle: each string in place, same length or shorter.
+* inline: each string in place, same length or shorter.
+* battle: in place; on the USA build a longer string moves the rest of its
+  section down through the string fields OV01's getters read
+  (``smallfiles.batdat_rebuild``), the file within its sectors.
+* subtitle: a file in the tree for a movie that has none on the disc is
+  refused (``_new_subtitle_files``: the decoder's block has no room for it).
 * menu, quest: rebuilt or rewritten; the file may not need more sectors than
   the original (that is what the loader read; the slot could be larger).
 * subtitle: ``moviesub.check_edit``; may be relocated with ``grow``.
@@ -529,7 +534,14 @@ class Battle(Kind):
     def export(self, ctx, path, data, info):
         import smallfiles
         rows = smallfiles.batdat_raw_strings(data)
-        lines = [f"# {path}  {len(rows)} strings  (replaced in place: same length or shorter, never longer)"]
+        if ctx.build == "us":
+            room = _round(len(data), SECTOR) - len(data)
+            grow = ", ".join(str(si) for si in smallfiles.BATDAT_STRING_FIELDS)
+            lines = [f"# {path}  {len(rows)} strings. 'max N' is a string's own bytes. A string of sections {grow} "
+                     f"may be longer: the strings after it in its section move down (the file has {room} spare "
+                     f"bytes in its last sector). Section 17 is in place only"]
+        else:
+            lines = [f"# {path}  {len(rows)} strings  (replaced in place: same length or shorter, never longer)"]
         for si, o, raw in rows:
             lines += [f"### S{si:02d} @{o:#06x} max {len(raw)} bytes", ctx.codec.to_text(raw)]
         return "\n".join(lines) + "\n"
@@ -548,9 +560,16 @@ class Battle(Kind):
         if not new:
             return data
         try:
-            blob = smallfiles.batdat_replace(data, new)
+            blob = smallfiles.batdat_rebuild(data, new, grow=ctx.build == "us")
         except smallfiles.SmallFileError as e:
             raise TextError(str(e))
+        if len(blob) != len(data):                     # strings moved: the next export finds the same strings
+            if sorted((si, r) for si, _, r in smallfiles.batdat_raw_strings(blob)) != sorted(
+                    (si, b) for si, _, b in want):
+                raise TextError("the edit would change which strings the next export finds: a string that "
+                                "grows must keep its first byte printable, and the strings after it must still be "
+                                "found where they move to")
+            return blob
         if smallfiles.batdat_raw_strings(blob) != want:
             got = {(si, o) for si, o, _ in smallfiles.batdat_raw_strings(blob)}
             lost = [k for k, (si, o, _) in zip(keys, rows) if (si, o) not in got]
@@ -561,7 +580,20 @@ class Battle(Kind):
         return blob
 
     def limit(self, ctx, e, data, new, alloc, sizes, grow):
-        return None if len(new) == len(data) else "the battle database changed size"
+        """In place, or (USA) grown within the sectors the game reads: OV01 FUN_00a81a70 loads the file with
+        FUN_00a83dc0 -> FUN_0019c1e0, which reads the TOC size rounded up to whole sectors into the static
+        buffer at 0x61D040. The next address any decompiled code names after it is 0x631140, so the
+        buffer may well be larger, but its size was not read; the file keeps to its sectors."""
+        if len(new) == len(data):
+            return None
+        if ctx.build != "us":
+            return "the battle database changed size"
+        if _round(len(new), SECTOR) > _round(len(data), SECTOR) or len(new) > alloc:
+            return (f"the longer battle strings make the file {len(new)} bytes; it may hold "
+                    f"{min(_round(len(data), SECTOR), alloc)} ({len(new) - min(_round(len(data), SECTOR), alloc)} "
+                    f"over): the game reads whole sectors of the file into a static buffer whose size is not "
+                    f"known. Shorten other battle strings")
+        return None
 
 
 def quest_skeleton(text: str) -> Optional[str]:
@@ -1034,6 +1066,7 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
             problems.append(f"{e.path}: {why}")
             continue
         changed[(chain, e.path)] = new
+    problems += _new_subtitle_files(root, matched, available_chains(iso), manifest)
     iso.close()
     if manifest is not None:
         absent = sorted(k for k in manifest.get("objects", {}) if k not in matched and (root / k).exists())
@@ -1041,6 +1074,30 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
             print(f"note: {len(absent)} text file(s) of this export have no object on this disc and were not "
                   f"applied (e.g. {absent[0]})", file=sys.stderr)
     return changed, problems
+
+
+def _new_subtitle_files(root: Path, matched, chains, manifest) -> List[str]:
+    """A subtitle file in the tree for a movie that has none on this disc (s020310 and four others) is
+    refused: the movie player FUN_001e7d08 reads <movie>.txt through the TOC into the start of the block
+    it allocates for the video decoder, and starts the decoder's work area right after the cues, at
+    align64 of their length; when the file is missing (FUN_0019c1e0 returns -1) that length is 0 and the
+    work area starts at the block's start. The block is sized for the decoder alone (an overrun of 64
+    bytes broke playback in the running game, docs/MODDING.md), so such a movie has no room for cues."""
+    out = []
+    objects = (manifest or {}).get("objects", {})
+    for f in sorted(root.glob("chain*/**/*.sub.txt")):
+        rel = _rel(root, f)
+        try:
+            chain = int(rel.split("/", 1)[0][5:])
+        except ValueError:
+            continue
+        if rel in matched or rel in objects or chain not in chains:
+            continue
+        out.append(f"{rel}: this disc has no subtitle file for that movie, and text-import does not add one. The "
+                   f"movie player keeps a movie's cues at the start of the video decoder's memory block and starts "
+                   f"the decoder right after them; with no subtitle file there is no room for any cue "
+                   f"(FUN_001e7d08, docs/DIALOGUE.md)")
+    return out
 
 
 def import_text(iso_path: str, text_dir: str, out_iso: str, grow: bool = False, rebase: bool = False) -> int:
@@ -1152,9 +1209,14 @@ def self_test() -> int:
     elf_us = minidisc.synthetic_executable("us")
     scene = [b"[A]One.", b"#1 starts with a hash", b"<\xa2\xa2> Caf\xe9 \xa4\xa5", b"", b"### 0001"]
     subs = (b";" + b"-" * 60 + b"\n0\t$ay390;\n00:01:00\tHello there\n00:02:00\tTwo\\nlines of it\n00:03:00\t\nend\n")
-    pool = b"Medica\x00One ally\x00Revert\x00"
-    sec0 = struct.pack("<4H", 16, 23, 7, 0) + struct.pack("<4H", 32, 23, 16, 23) + pool
-    bd = struct.pack("<III", 1, 12 + len(sec0), 12) + sec0
+    # the battle database with the retail numbering: 19 sections, the text in section 6 (12-byte records,
+    # name +0 and description +2 read by OV01 FUN_00a9b750; +4 and +6 are numbers equal to string offsets)
+    pool = b"Medica\x00One ally\x00Revert\x00\x00"
+    sec6 = struct.pack("<6H", 24, 31, 7, 0, 0, 0) + struct.pack("<6H", 40, 31, 24, 31, 0, 0) + pool
+    bsecs = [struct.pack("<4H", 1, 2, 3, 4)] * 19
+    bsecs[6] = sec6
+    boffs = [84 + sum(len(x) for x in bsecs[:i]) for i in range(19)]
+    bd = struct.pack("<II", 19, 84 + sum(len(x) for x in bsecs)) + struct.pack("<19I", *boffs) + b"".join(bsecs)
     quest = "No.1\r\n{\r\n\tName:\"Sikes\"\r\n}\r\n".encode("shift_jis")
     treasure = "".join(f"No.{i + 1}\r\n{{\r\n\tItem:\"Potion\"\r\n\tLocate:\"Here\"\r\n\tExpl:\"Heals\\nyou.\"\r\n}}\r\n"
                        for i in range(18)).encode("ascii")
@@ -1312,18 +1374,34 @@ def self_test() -> int:
         _edit(bt, "One ally", "One")
         ch, pr = plan(iso, tree)
         check(not pr and ch[(0, "yamamoto\\batdat.us")] == bd.replace(b"One ally", b"One\x00\x00\x00\x00\x00"), "a battle string is shortened in place")
+        fresh()
         _edit(bt, "Medica", "Medica+")
-        check(refused(iso, tree, "may not get longer"), "a longer battle string is refused")
+        ch, pr = plan(iso, tree)
+        import smallfiles
+        got = ch.get((0, "yamamoto\\batdat.us"))
+        check(not pr and got is not None and len(got) > len(bd)
+              and [r for _, _, r in smallfiles.batdat_raw_strings(got)] == [b"Medica+", b"One ally", b"Revert"]
+              and smallfiles.batdat_field_texts(got)[(6, 1, 0)] == b"Revert",
+              "a longer battle string (USA) grows: the strings after it in its section move down")
+        fresh()
+        _edit(bt, "Medica", "M" * 3000)
+        check(refused(iso, tree, "Shorten other battle strings"), "a battle database past its sectors is refused")
         fresh()
         _edit(bt, "Medica", "⟦01⟧edica")
         check(refused(iso, tree, "disappear"), "a battle edit that would hide a section from the next export is refused")
         fresh()
         t = bt.read_text(encoding="utf-8")
-        a, b = t.index("### S00 @0x0010"), t.index("### S00 @0x0017")
+        a, b = t.index("### S06 @0x0018"), t.index("### S06 @0x001f")
         bt.write_text(t[:b] + t[a:b] + t[b:], encoding="utf-8")
         check(refused(iso, tree, "twice"), "a battle block given twice is refused")
         bt.write_text(t[:a] + t[b:], encoding="utf-8")
         check(refused(iso, tree, "missing"), "a missing battle block is refused")
+        # a subtitle file for a movie that has none on the disc
+        fresh()
+        extra = tree / "chain0" / "movie" / "en" / "s020310.sub.txt"
+        extra.write_text("00:01:00 Hello.\n00:03:00\nend\n", encoding="utf-8")
+        check(refused(iso, tree, "does not add one"), "a subtitle file for a movie with none on the disc is refused")
+        extra.unlink()
         # quest text
         fresh()
         q = Quest().tree_path(tree, 0, "iwase\\Quest.txt")

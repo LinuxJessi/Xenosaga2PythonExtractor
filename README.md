@@ -110,7 +110,8 @@ Shift-JIS, as `X.sjis.txt`) and the battle database's names and descriptions
 says which one an edit broke: menus and quest text may not need more sectors
 than the original, each quest text must fit its field of the loader's
 record, subtitle text must stay inside what the retail subtitles reach,
-battle strings may not get longer, and `--grow` relocates a dialogue bank
+battle strings may grow within the file's sectors (USA; the rest of their
+section moves down), and `--grow` relocates a dialogue bank
 within the room its loader has ([docs/MODDING.md](docs/MODDING.md)).
 
 What you type is read the way the build reads it: on the USA discs `é` is one

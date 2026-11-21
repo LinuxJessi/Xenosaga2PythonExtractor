@@ -1,5 +1,33 @@
 # Updates
 
+## 2026-11-20 (later still): text coverage, round 2
+
+* **Battle strings grow (USA).** The string fields of the battle database
+  were read from OV01's getters (`FUN_00a9b338`, `FUN_00a9b750` ...
+  `FUN_00a9bba8`): sections 0, 1, 6-14 and 18. A longer string is written
+  where it is, the rest of its section moves down, exactly those fields are
+  moved, the later sections and the header follow, and the result is read
+  back field by field (`smallfiles.batdat_rebuild`). The file keeps to its
+  sectors (220 spare bytes on the USA disc). Section 17 and the Japanese
+  file stay in place. An unedited tree still imports as no change.
+* **Subtitles for a movie without any** (`s020310` and four others):
+  `text-import` refuses such a file and says why (the movie player keeps
+  the cues in the video decoder's block, which has no room when there were
+  none). `s020310`'s re-dubbed USA voice track is noted in DIALOGUE.md.
+* **`text-coverage`**: rows for the party-menu labels, the battle pop-ups
+  and glyph effect inside effect files, the ANIMA logo, the quest-board
+  pictures, and checked negatives (`no text`: door pictures, disc-change
+  picture, boot images, `matumoto` textures, UMN banners); the map texture
+  survey (OCR, at least 109 files with words, 12 `_us` entries) and the
+  movies with drawn words. `--tex-words` lists the texture entries with
+  words; `--verify` also checks that they are on the disc and tries the
+  battle growth writer on the disc's own file.
+* **App**: cards for `dialogue`, `font-extract`, `font-rebuild`, `natives`
+  and `recolor`; the `text-import` card lists everything it writes. The app
+  self-test checks that every command has its card text.
+* **Executable strings**: why none grows, and the one debug string left out
+  on purpose (MODDING.md).
+
 ## 2026-11-20 (later): text coverage
 
 * **`text-coverage`** (`coverage.py`): every place the game shows text and

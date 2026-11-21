@@ -122,8 +122,26 @@ where the next cue starts; `end` closes the file. `$ay390;$xx0,22;` place the
 text, `\n` breaks it, `[漢字/かんじ]` is ruby and keeps its base. The movies'
 lines carry no speaker. Besides the `sNNNNNN` story movies there are `EPSTAFF`
 (the staff-roll movie, which has dialogue) and `EP07` (a closing scene).
-Five of the 50 movies have no subtitle file: `s020310`, `s060400`, `s06over`,
-`s080500`, `s090500`.
+Five of the 50 movies have no subtitle file: `s020310`, `s060400`,
+`s06over`, `s080500`, `s090500`. Four of them have the same audio on the
+Japanese and the USA discs, so they are probably wordless. `s020310` (108.6
+s) is not: its USA audio track differs from the Japanese one (re-dubbed, so
+probably voiced; nobody has listened to it yet), and neither region has a
+subtitle file for it, so whatever is said in it exists only as sound and no
+text tool can reach it. Adding one is not possible within what the code
+allows: the player (`FUN_001e7d08`) builds the path from the movie's name
+and reads it through the TOC (`FUN_0019c1e0`, which returns -1 for a missing
+file, and then the movie plays without subtitles); the cues are kept at the
+start of the block allocated for the video decoder and the decoder's work
+area starts right after them (see "Subtitle limit" in MODDING.md). With no
+file that work area starts at the block's start, so there is no room for any
+cue. The table of contents itself could take a new name (the lookup
+`FUN_0019b458` walks it from the start and compares whole paths, order does
+not matter, and Disc 1's movie TOC, which one branch of `FUN_0019d850` reads
+into a 0x1800-byte area, has about 1,900 bytes of filler left), but that
+does not help the decoder's block. `text-import` therefore refuses a
+subtitle file in the tree for a movie that has none on the disc, and says
+why.
 
 ## Voice clips (`--voice`)
 

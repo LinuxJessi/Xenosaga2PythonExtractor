@@ -17,14 +17,20 @@ Statuses:
 * ``export only``: the kit writes a viewable copy (PNG, JPEG, MP4) and has no
   checked writer for it.
 * ``not loaded``: on the disc, but no code of the USA build names it.
+* ``no text``: pictures that were looked at and carry no words (listed so
+  that nobody has to look again).
 
 ``--verify`` also exports every text and executable string into a temporary
 folder and plans an import of the unedited trees onto each disc given: the
 plan must change nothing. On the USA executable it also checks the prompts
 read by the print function's control-code grammar (the save and boot
-prompts): each must be listed with its exact end.
+prompts): each must be listed with its exact end; and it reads every texture
+entry of ``TEX_WORDS`` (texture pages with words a player reads, found by
+looking) from the disc: each must be where the list says; and it tries the
+battle database's growth writer on the disc's own file (``batdat_probe``).
+``--tex-words`` prints the texture list.
 
-    python cli.py text-coverage --iso DISC1.iso [--iso DISC2.iso] [--verify] [--tsv OUT.tsv]
+    python cli.py text-coverage --iso DISC1.iso [--iso DISC2.iso] [--verify] [--tsv OUT.tsv] [--tex-words]
     python coverage.py --self-test
 """
 from __future__ import annotations
@@ -63,8 +69,10 @@ KIND_ROWS = {
     "menu": ("menus, item/skill/location names, help text, database", "yosikawa\\*.txd", "editable",
              "within the file's sectors (the loader's static buffers)"),
     "battle": ("battle names and descriptions: party, enemies, skills, items, equipment, messages",
-               "yamamoto\\batdat.us", "in place",
-               "same length or shorter: which u16 fields are offsets is not known from the file (smallfiles.batdat_replace)"),
+               "yamamoto\\batdat.us", "editable",
+               "USA: a longer string moves the rest of its section down, through the string fields OV01's getters "
+               "read (smallfiles.BATDAT_STRING_FIELDS), the file within its sectors; section 17 and the Japanese "
+               "file in place, same length or shorter"),
     "quest": ("quest, citizen and treasure text", "iwase\\*.txt", "editable",
               "each text within its field of the loader's record (QUEST_LAYOUTS), the file within its sectors"),
     "subtitle": ("movie subtitles", "movie\\en\\*.txt", "editable", "moviesub.check_edit; --grow relocates"),
@@ -92,21 +100,174 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
     ("picture", "staff-credit images", ("credit.bin",), "export only", "a pack of 6 JPEG (FUN_002b31a0, ov02 FUN_00a80590)"),
     ("picture", "boot logos, 'DISC 1' / 'DISC 2', copyright line", ("yajima\\title.bin", "yajima\\title2.bin"),
      "export only", "ARX-compressed raw 512x448 RGBA (ov02 FUN_00a815f0)"),
-    ("picture", "UMN banners", ("yosikawa\\umn?.jpg",), "export only",
+    ("picture", "UMN banners", ("yosikawa\\umn?.jpg",), "no text",
      "no text seen in them (all eight looked at, 2026-11-20)"),
+    ("picture", "party-menu labels '<< COMBATANT >>' and '<< RESERVE >>', and '<< ATTACKER >>', which no executable "
+                "names",
+     ("yosikawa\\model\\atk.txy", "yosikawa\\model\\rsv.txy", "yosikawa\\atk.txy"), "export only",
+     "entries dn_atk02, dn_rsv02 and dn_atk (looked at, 2026-11-20; RESERVE is drawn so that it reads RESERUE, as in "
+     "the Japanese build's dn_rsv). SLUS_208.92 names model\\atk.txy and model\\rsv.txy (pointer table at "
+     "0x003EB098), but not yosikawa\\atk.txy: whether ATTACKER is ever shown is not known. browse writes PNG; "
+     "texture-import (another branch, not merged) writes standalone txy pages"),
+    ("picture", "battle pop-up words 'Boost Bonus' and 'Stock Bonus'", ("simajiri\\esp\\default.esp",), "export only",
+     "texture pages inside an effect file (embedded.py): de_moji01 at 0x14DC0, de_moji02 at 0x15A40 (looked at, "
+     "2026-11-20; which screen shows them was not seen in the game). browse writes them under "
+     "textures_png/_embedded; texture-import (another branch, not merged) writes embedded pages"),
+    ("picture", "glyph effect: the kanji \u546a \u82e6 \u6bba \u6028 \u59ac \u81ed \u5bd2 \u6697 and the word CRY",
+     ("simajiri\\esd\\pe820_004.esd",), "export only",
+     "nine texture pages moji01-moji09 inside the effect file (0x1C680-0x56CC0), kept in Japanese by the USA "
+     "build (looked at, 2026-11-20; which attack plays it was not seen in the game). The other letter-sprite "
+     "effects carry decorative Greek or made-up script, not words"),
+    ("picture", "the ANIMA logo with its small print on the title backdrop", ("yajima\\titlebg2.bin",), "export only",
+     "entry anima_logo of the texture page at 0x583C40 inside the backdrop (embedded.py); browse writes it under "
+     "textures_png/_embedded"),
+    ("picture", "quest-board pictures: signs in the citizen portraits, numbers on the item cards",
+     ("iwase\\img\\citizen\\*.xtx", "iwase\\img\\item\\*.xtx"), "export only",
+     "minor drawn words: shop signs behind some of the 50 citizens ('MADE IN HEAVEN', 'NO! TRESPASSING', "
+     "'CLOSED', 'ROBO-FOUNDRY', 'UNUS MUNDUS NEWS', 'WEAPON', ...) and digits on some of the 18 item cards "
+     "(looked at, 2026-11-20). browse writes PNG cut by the masks ctz_alpha.xtx / item_alpha.xtx; "
+     "texture-import (another branch, not merged) writes them"),
+    ("picture", "door pictures of the quest board", ("iwase\\img\\door\\doorimg.dat",), "no text",
+     "a pack of 18 XTX in its own format (u32 count 0x12, u32 offsets, the first XTX at 0x50); no words in any of "
+     "them (looked at, 2026-11-20). browse does not unpack it"),
+    ("picture", "the disc-change picture and the boot images", ("yajima\\diskchg.jpg", "yajima\\im.bin"), "no text",
+     "art behind prompts the executable prints (im.bin: a pack of 4 JPEG); no words in them (looked at, 2026-11-20)"),
+    ("picture", "the matumoto folder's textures (Tra*, Tre*, Item*, Save_P*, Ret_P*, Evs_P, look)", ("matumoto\\*.txy",),
+     "no text", "only logos (EVS, UMN, AWGS), no words (looked at, 2026-11-20)"),
     ("picture", "signs and screens on map and model textures", ("*.txy",), "export only",
-     "texture-import (another branch) writes txy; which textures carry words has not been surveyed"),
+     "surveyed by OCR, 2026-11-20: at least 109 files carry words, among them status words the player reads "
+     "(E2_ELS04 'SEARCH IN PROGRESS / STANDBY / Locked / Unlocked', 'THIS ELEVATOR CANNOT BE USED NOW'), and 12 "
+     "entries whose names end in _us where the Japanese build has the same entry without the suffix, most with "
+     "another picture (redrawn for the USA build); the named entries are listed with "
+     "--tex-words and docs/MODDING.md. OCR misses small, stylised and Japanese text, so this is a lower bound. "
+     "texture-import (another branch, not merged) writes txy"),
     ("video", "staff roll", ("movie\\epstaff.sfd",), "export only",
      "the credits are drawn into the video (frames looked at, 2026-11-20); movie\\en\\EPSTAFF.txt is its dialogue "
      "subtitles, not the credits. Re-encoding video is not part of the kit"),
     ("video", "event movies", ("movie\\*.sfd",), "export only",
-     "subtitles are separate text (the subtitle row); words drawn into the picture are video"),
+     "subtitles are separate text (the subtitle row). Words drawn into the picture (OCR of a frame every 3 s, "
+     "2026-11-20, a lower bound): s010100 the opening cards ('Namco Presents', 'A MONOLITH SOFTWARE INC. "
+     "Production', 'Xenosaga EPISODE II Jenseits von Gut und B\u00f6se'), s010310 interface screens "
+     "('COMMUNICATION', 'CALL SIGN TO...', 'SEND', 'Connection Viewer', 'Receiving Device', 'Waveform:'), "
+     "s010610 'ROOF GARDEN', s020520 a 'SYSTEM' screen (OCR reads 'CRMUS'), s031000 'Unus Mundus Network', "
+     "s050400 'DINAH' / 'VECTOR', s080900 'CATHERINE' / 'CECILIA', EP07 'TO BE CONTINUED'. s020310 has a USA "
+     "voice track that differs from the Japanese one and no subtitle file in either region (docs/DIALOGUE.md)"),
     ("video", "in-engine event clips", ("movie\\cfevent\\*.ipu",), "export only",
-     "some carry drawn graphics (a sampled clip shows the UMN logo); not surveyed clip by clip"),
+     "words drawn in (OCR of every 20th frame, 2026-11-20, a lower bound): moni_111 (monitor text), noise_umn and "
+     "noise_umn_l (the UMN logo)"),
     ("other", "Japanese placeholder quest files", ("iwase\\questmes2.txt", "iwase\\citizen2.txt",
                                                    "iwase\\treasure2.txt"), "not loaded",
      "exported with the quest files; no USA executable names them"),
 ]
+
+# Texture entries with words a player reads, found by looking (USA discs, 2026-11-20): (TOC path, offset of
+# the embedded txy block or None for a standalone .txy, entry name, what is drawn). ``--verify`` checks on a
+# USA disc that every entry is where this list says; ``--tex-words`` prints the list. Not every texture with
+# words is here: the *.txy row gives the survey's count.
+TEX_WORDS: List[Tuple[str, Optional[int], str, str]] = [
+    ("yosikawa\\model\\atk.txy", None, "dn_atk02", "<< COMBATANT >> (party menu; USA name, Japanese dn_atk)"),
+    ("yosikawa\\model\\rsv.txy", None, "dn_rsv02", "<< RESERVE >>, drawn so that it reads RESERUE (party menu; USA "
+                                                 "name, Japanese dn_rsv)"),
+    ("yosikawa\\atk.txy", None, "dn_atk", "<< ATTACKER >> (no executable names this file)"),
+    ("simajiri\\esp\\default.esp", 0x14DC0, "de_moji01", "Boost Bonus (battle pop-up)"),
+    ("simajiri\\esp\\default.esp", 0x15A40, "de_moji02", "Stock Bonus (battle pop-up)"),
+    ("simajiri\\esd\\pe820_004.esd", 0x21140, "moji01", "\u546a (glyph effect)"),
+    ("simajiri\\esd\\pe820_004.esd", 0x31C40, "moji02", "\u82e6"),
+    ("simajiri\\esd\\pe820_004.esd", 0x50780, "moji03", "\u6bba"),
+    ("simajiri\\esd\\pe820_004.esd", 0x56CC0, "moji04", "\u6028"),
+    ("simajiri\\esd\\pe820_004.esd", 0x1C680, "moji05", "\u59ac"),
+    ("simajiri\\esd\\pe820_004.esd", 0x25C00, "moji06", "\u81ed"),
+    ("simajiri\\esd\\pe820_004.esd", 0x2D180, "moji07", "\u5bd2"),
+    ("simajiri\\esd\\pe820_004.esd", 0x36700, "moji08", "\u6697"),
+    ("simajiri\\esd\\pe820_004.esd", 0x4BCC0, "moji09", "CRY"),
+    ("yajima\\titlebg2.bin", 0x583C40, "anima_logo", "ANIMA logo with small print (title backdrop)"),
+    ("model\\map\\E2_ELS04.txy", None, "moji_us", "SEARCH IN PROGRESS / COMPARTMENT EXTENSION / STANDBY / Locked / "
+                                               "Unlocked (USA; the Japanese moji ends USABLE / NONUSABLE)"),
+    ("model\\map\\E2_ELS04.txy", None, "attention", "ATTENTION / THIS ELEVATOR CANNOT BE USED NOW"),
+    ("model\\map\\E2_ELS07.txy", None, "moji", "SEARCH IN PROGRESS / COMPARTMENT EXTENSION / STANDBY / USABLE / "
+                                          "NONUSABLE"),
+    ("model\\map\\E2_MIL03.txy", None, "moji", "the same as E2_ELS07 moji"),
+    ("model\\map\\E2_MIL09.txy", None, "moji", "the same as E2_ELS07 moji"),
+    ("model\\map\\E2_DYU03.txy", None, "e_monita_02", "NOW AN ELEVATOR CANNOT BE USED"),
+    ("model\\map\\E2_MID04.txy", None, "E2_MID_04_089_us", "No Entry (USA; Japanese E2_MID_04_089: NO THOROUGHFARE)"),
+    ("model\\map\\E2_KUK11.txy", None, "kanban02_01_us", "FISHMAN CLASSIC shop sign (USA)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_kou_01_us", "kanji numerals (USA; Japanese book_kou_01: \u7532 \u4e59 \u4e19)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_hei_01_us", "kanji numerals (USA)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_bou_01_us", "kanji numerals (USA)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_kou_us", "kanji numerals (USA)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_hei_us", "kanji numerals (USA)"),
+    ("model\\map\\E2_UZU01.txy", None, "book_bou_us", "kanji numerals (USA)"),
+    ("model\\map\\E2_MID01.txy", None, "m01_con0000_us", "no words (USA; the Japanese m01_con0000 has a label)"),
+    ("model\\map\\E2_MID01.txy", None, "m01_con0000_1_us", "no words (USA)"),
+    ("model\\map\\E2_MID02.txy", None, "m01_con0000_us", "no words (USA)"),
+]
+
+
+def tex_word_problems(read, facts=None) -> List[str]:
+    """The TEX_WORDS entries (or ``facts``) that are not where the list says. ``read(path)`` returns the
+    object's bytes (decompressed) or None when the disc has no such object."""
+    import embedded
+    import txy
+    bad = []
+    cache: Dict[Tuple[str, Optional[int]], Optional[List[str]]] = {}
+    for path, block, entry, _ in (TEX_WORDS if facts is None else facts):
+        if (path, block) not in cache:
+            data = read(path)
+            names = None
+            if data is not None:
+                try:
+                    if block is None:
+                        names = [e["name"] for e in txy.parse(data)["entries"]]
+                    else:
+                        found = dict(embedded.iter_blocks(data))
+                        if block in found:
+                            names = [e["name"] for e in txy.parse(found[block])["entries"]]
+                except txy.TxyError:
+                    names = None
+            cache[(path, block)] = names
+        names = cache[(path, block)]
+        where = path + (f" block 0x{block:X}" if block is not None else "")
+        if names is None:
+            bad.append(f"{where}: no such " + ("txy block" if block is not None else "texture file"))
+        elif entry not in names:
+            bad.append(f"{where}: no entry {entry}")
+    return bad
+
+
+def batdat_probe(data: Optional[bytes]) -> List[str]:
+    """Problems found when the battle database's growth writer is tried on the disc's own file: unedited it
+    must give the file back, and one string of every section it may grow, made one byte longer, must fit
+    the file's sectors and come back from the next export with every other string unchanged."""
+    import smallfiles
+    if data is None:
+        return []
+    bad = []
+    try:
+        if smallfiles.batdat_rebuild(data, {}, grow=True) != data:
+            bad.append("the unedited rebuild is not the file")
+        raw = smallfiles.batdat_raw_strings(data)
+        edits = {}
+        for si in smallfiles.BATDAT_STRING_FIELDS:
+            rows = [(o, r) for s, o, r in raw if s == si and r]
+            if rows:
+                o, r = rows[len(rows) // 2]
+                edits[(si, o)] = r + r[-1:]
+        blob = smallfiles.batdat_rebuild(data, edits, grow=True, max_size=-(-len(data) // 2048) * 2048)
+        got = sorted((si, r) for si, _, r in smallfiles.batdat_raw_strings(blob))
+        want = sorted([(si, r) for si, o, r in raw if (si, o) not in edits] + [(k[0], v) for k, v in edits.items()])
+        if got != want:
+            bad.append("after growing one string per section the next export finds other strings")
+    except smallfiles.SmallFileError as e:
+        bad.append(str(e))
+    return bad
+
+
+def format_tex_words() -> str:
+    out = ["== Texture entries with words (picture editing; looked at on the USA discs, 2026-11-20)"]
+    for path, block, entry, words in TEX_WORDS:
+        out.append(f"{path}" + (f" @0x{block:X}" if block is not None else "") + f"  {entry}: {words}")
+    return "\n".join(out) + "\n"
+
 
 # prompts the print function's grammar reads past NUL parameters (USA SLUS_208.92 and OV02.OVL):
 # (file role, VA, the end the string must have, its first characters)
@@ -132,11 +293,13 @@ def _toc_paths(iso: IsoImage) -> List[Tuple[int, str]]:
 def _text_rows(isos: List[IsoImage]) -> List[Row]:
     import textpack
     seen: Dict[Tuple[int, str], str] = {}
+    builds = set()
     files: Dict[str, int] = {}
     strings: Dict[str, int] = {}
     compressed: Dict[str, int] = {}
     for iso in isos:
         ctx = textpack.Context(iso)
+        builds.add(ctx.build)
         for chain, e, kind, stored, data, alloc, sizes in textpack._objects(iso):
             if (chain, e.path) in seen:
                 continue
@@ -157,6 +320,8 @@ def _text_rows(isos: List[IsoImage]) -> List[Row]:
         if k.name not in files:
             continue
         what, where, status, note = KIND_ROWS.get(k.name, (k.name, "", "editable", ""))
+        if k.name == "battle" and "us" not in builds:  # strings grow only on the USA build
+            where, status, note = "yamamoto\\batdat.bin", "in place", "same length or shorter"
         n = f"{files[k.name]} file(s)" + (f", {strings[k.name]} string(s)" if strings.get(k.name) else "")
         if compressed.get(k.name):
             note = (note + "; " if note else "") + f"{compressed[k.name]} stored compressed: import refuses those"
@@ -217,8 +382,22 @@ def _media_rows(paths: List[Tuple[int, str]]) -> List[Row]:
     return rows
 
 
-def report(iso_paths: List[str], verify: bool = False) -> Tuple[List[Row], List[str]]:
-    """(rows, problems). Problems are only found with ``verify``."""
+def _reader(iso_path: str):
+    """read(path) -> the chain-0 object's bytes (decompressed), None when the disc has no such object."""
+    import repack
+
+    def read(path: str) -> Optional[bytes]:
+        try:
+            return repack.read_entry(iso_path, 0, path)
+        except repack.RepackError:
+            return None
+    return read
+
+
+def report(iso_paths: List[str], verify: bool = False, done: Optional[List[str]] = None
+           ) -> Tuple[List[Row], List[str]]:
+    """(rows, problems). Problems are only found with ``verify``; ``done`` collects what was checked."""
+    done = [] if done is None else done
     isos = [IsoImage(p) for p in iso_paths]
     problems: List[str] = []
     try:
@@ -231,11 +410,18 @@ def report(iso_paths: List[str], verify: bool = False) -> Tuple[List[Row], List[
         rows += _media_rows(paths)
         if verify and es is not None and es.boot is not None and es.boot.sha256 == region.US.exe_sha256:
             problems += [f"grammar: {b}" for b in grammar_facts(es)]
+            read = _reader(iso_paths[0])
+            problems += [f"texture words: {b}" for b in tex_word_problems(read)]
+            problems += [f"battle database: {b}" for b in batdat_probe(read("yamamoto\\batdat.us"))]
+            done += ["the control-code prompts are listed with their exact ends",
+                     "the texture entries with words are where the list says",
+                     "the battle database's strings grow on this disc's file"]
     finally:
         for iso in isos:
             iso.close()
     if verify:
         problems += _verify(iso_paths)
+        done.insert(0, "every unedited tree imports as no change")
     return rows, problems
 
 
@@ -294,9 +480,12 @@ def format_rows(rows: List[Row]) -> str:
     return "\n".join(out)
 
 
-def cmd(iso_paths: List[str], verify: bool = False, tsv: Optional[str] = None) -> int:
-    rows, problems = report(iso_paths, verify)
+def cmd(iso_paths: List[str], verify: bool = False, tsv: Optional[str] = None, tex_words: bool = False) -> int:
+    done: List[str] = []
+    rows, problems = report(iso_paths, verify, done)
     print(format_rows(rows))
+    if tex_words:
+        print(format_tex_words())
     if tsv:
         import csv
         with open(tsv, "w", encoding="utf-8", newline="") as fh:
@@ -307,8 +496,7 @@ def cmd(iso_paths: List[str], verify: bool = False, tsv: Optional[str] = None) -
     if verify:
         for p in problems:
             print("FAILED: " + p)
-        print("verify: " + ("every unedited tree imports as no change; the control-code prompts are listed with "
-                            "their exact ends" if not problems else f"{len(problems)} problem(s)"))
+        print("verify: " + ("; ".join(done) if not problems else f"{len(problems)} problem(s)"))
     return 1 if problems else 0
 
 
@@ -369,6 +557,51 @@ def self_test() -> int:
         check(out.index("== Text the kit edits") < out.index("== Strings in the executables")
               < out.index("== Words drawn into pictures"), "the report lists text, executables, then pictures")
         del by
+    # the picture rows: a specific row claims its files before the generic *.txy row does
+    toc = [(0, p) for p in ("yosikawa\\model\\atk.txy", "yosikawa\\model\\rsv.txy", "yosikawa\\atk.txy",
+                            "yosikawa\\model\\atk.pxy", "yosikawa\\skillmdl\\skilball01.txy",
+                            "model\\map\\E2_ELS04.txy", "simajiri\\esp\\default.esp", "simajiri\\esp\\pe001.esp",
+                            "simajiri\\esd\\pe820_004.esd", "simajiri\\esd\\pe820_005.esd", "yajima\\titlebg2.bin",
+                            "iwase\\img\\citizen\\c01.xtx", "iwase\\img\\citizen\\ctz_alpha.xtx",
+                            "iwase\\img\\item\\item00.xtx", "iwase\\img\\door\\door_alpha.xtx",
+                            "iwase\\img\\door\\doorimg.dat", "matumoto\\Save_P.txy", "yajima\\diskchg.jpg")]
+    rows = {r.source: r for r in _media_rows(toc)}
+    party = next((r for s, r in rows.items() if "COMBATANT" in s), None)
+    check(party is not None and party.count == "3 file(s)" and "yosikawa\\model\\rsv.txy" in party.where
+          and "yosikawa\\atk.txy" in party.where, "the party-menu row claims exactly its three txy files")
+    generic = next((r for s, r in rows.items() if s.startswith("signs and screens")), None)
+    check(generic is not None and generic.count == "2 file(s)" and "skilball01" in generic.where
+          and "E2_ELS04" in generic.where, "the generic *.txy row gets only what no specific row claimed")
+    fx = [r for s, r in rows.items() if "Boost Bonus" in s or "glyph effect" in s]
+    check(len(fx) == 2 and all(r.count == "1 file(s)" for r in fx) and "pe001" not in fx[0].where + fx[1].where
+          and "pe820_005" not in fx[0].where + fx[1].where, "the effect rows name default.esp and pe820_004.esd only")
+    quest = next((r for s, r in rows.items() if s.startswith("quest-board")), None)
+    check(quest is not None and quest.count == "3 file(s)", "the quest-board row: the portraits, their mask and "
+                                                           "the cards (door_alpha stays with the UI sheets)")
+    check(sum(r.status == "no text" for r in rows.values()) == 3, "doorimg.dat, matumoto and diskchg.jpg are "
+                                                                  "'no text' rows")
+    # the texture facts are checked against the bytes of a texture, standalone and embedded
+    import txy
+    block, _ = txy._build_synthetic()
+    junk = b"\x00" * 37 + b"ef_ring.txy\x00" + b"\x11" * 19
+    objs = {"a.txy": block, "fx.esd": junk + block + b"\x22" * 10}
+    read = objs.get
+    good = [("a.txy", None, "face_00", ""), ("fx.esd", len(junk), "face_01", "")]
+    check(tex_word_problems(read, good) == [], "texture facts: an entry of a standalone txy and of a block "
+                                                "embedded in an effect file are found")
+    bad = [("a.txy", None, "face_09", ""), ("fx.esd", len(junk) + 4, "face_00", ""), ("none.txy", None, "x", "")]
+    check(len(tex_word_problems(read, bad)) == 3, "a missing entry, a wrong block offset and a missing file "
+                                                   "are each reported")
+    # the battle-database probe: passes on a well-formed file, fails where a string field points inside a string
+    secs = [struct.pack("<4H", 1, 2, 3, 4)] * 19
+    secs[6] = struct.pack("<6H", 24, 31, 0, 0, 0, 0) + struct.pack("<6H", 40, 31, 0, 0, 0, 0) + \
+        b"Medica\x00One ally\x00Revert\x00\x00"
+    offs = [84 + sum(len(x) for x in secs[:i]) for i in range(19)]
+    db = struct.pack("<II", 19, 84 + sum(len(x) for x in secs)) + struct.pack("<19I", *offs) + b"".join(secs)
+    check(batdat_probe(db) == [], "the battle probe passes on a well-formed database")
+    broken = bytearray(db)
+    struct.pack_into("<h", broken, offs[6] + 12 + 2, 33)          # a description that starts inside 'One ally'
+    check(len(batdat_probe(bytes(broken))) == 1, "and reports a field that points inside the string it grows")
     # the facts about the retail prompts are checked against a scan, not against themselves
     es = exetext.ExeSet([("SLUS_208.92", boot, "boot")])
     check(len(grammar_facts(es)) == len(GRAMMAR_FACTS), "on a build without those prompts every fact is reported "
@@ -384,13 +617,14 @@ def main(argv=None) -> int:
     ap.add_argument("--iso", action="append")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--tsv")
+    ap.add_argument("--tex-words", action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
     if not a.iso:
         ap.print_help()
         return 2
-    return cmd(a.iso, a.verify, a.tsv)
+    return cmd(a.iso, a.verify, a.tsv, a.tex_words)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ Usage:
     python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso [--grow] [--rebase]
     python cli.py exe-export --iso DISC.iso --out EXEDIR
     python cli.py exe-import --iso DISC.iso --text EXEDIR --out MODDED.iso [--retail RETAIL.iso]   (run last)
-    python cli.py text-coverage --iso DISC1.iso [--iso DISC2.iso] [--verify] [--tsv OUT.tsv]
+    python cli.py text-coverage --iso DISC1.iso [--iso DISC2.iso] [--verify] [--tsv OUT.tsv] [--tex-words]
     python cli.py font-extract --iso DISC.iso --out FONTDIR
     python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
@@ -346,7 +346,7 @@ def cmd_exe_import(args) -> int:
 def cmd_text_coverage(args) -> int:
     import coverage
 
-    return coverage.cmd(args.iso, verify=args.verify, tsv=args.tsv)
+    return coverage.cmd(args.iso, verify=args.verify, tsv=args.tsv, tex_words=args.tex_words)
 
 
 def cmd_dialogue(args) -> int:
@@ -537,6 +537,8 @@ def main(argv=None) -> int:
     p.add_argument("--verify", action="store_true",
                    help="also export everything and check that the unedited trees import as no change")
     p.add_argument("--tsv", help="also write the report as a TSV file")
+    p.add_argument("--tex-words", action="store_true",
+                   help="also list the texture entries with words a player reads (they need picture editing)")
     p.set_defaults(func=cmd_text_coverage)
 
     p = sub.add_parser("font-extract", help="the fonts as PNG sheets + metrics CSV + the byte-to-cell table")
