@@ -1,5 +1,18 @@
 # Updates
 
+## 2026-11-20 (round 4): the user's walk-through of text coverage
+
+* **Reading hints stay on one line.** Seven `exe-export` hints for Japanese
+  developer strings in SLUS_208.92 / SLUS_211.33 (the ladder label at
+  0x006899D0, `メモカテスト` at 0x00688B58 and five more) carried the
+  string's raw control bytes: a carriage return or a vertical tab. An editor,
+  or a script that reads the file in text mode, ends the comment line there,
+  and the rest of the hint becomes a line of its own, which `exe-import`
+  reads as the string's new text and refuses. The hints of both exports now
+  write every control character as a `⟦XX⟧` escape. Found by exporting both
+  USA discs, editing one string of every kind, importing onto copies and
+  exporting again; the walk-through itself is not part of the kit.
+
 ## 2026-11-20 (round 3): text coverage, the last gaps
 
 * **Memory-card slot number (USA).** Twelve `MainMenu.txd` prompts carry the
