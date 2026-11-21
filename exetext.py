@@ -1051,8 +1051,18 @@ def _euc_hint(raw: bytes) -> str:
             continue
         jp = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF or 0xFF61 <= ord(c) <= 0xFF9F for c in t)
         if jp >= 2 and 2 * jp >= len(t.replace(" ", "")):
-            return f"{enc.replace('_', '-').upper()}: " + t.replace("\n", "\\n").replace("\t", " ")
+            return f"{enc.replace('_', '-').upper()}: " + hint_safe(t.replace("\n", "\\n").replace("\t", " "))
     return ""
+
+
+def hint_safe(t: str) -> str:
+    """A reading hint as one comment line: every other control character (a CR, a vertical
+    tab, the print function's codes) as a \u27e6XX\u27e7 escape. Left raw, a CR or a vertical tab
+    ends the line in many editors and in universal-newline reads (Python's text mode), and
+    the rest of the hint then lands on a line of its own outside the comment, where
+    exe-import reads it as the string's new text."""
+    return "".join(f"\u27e6{ord(c):02X}\u27e7" if ord(c) < 0x20 or ord(c) == 0x7F or 0x80 <= ord(c) < 0xA0
+                   or c in "\u2028\u2029" else c for c in t)
 
 
 def tree_name(name: str, role: str) -> str:
@@ -1589,6 +1599,11 @@ def self_test() -> int:
     check(_print_string(ladder + b"\0", 0, 9) == ladder and _print_string(b"\x0d\x02\xa5\xcf\xa5\xb7\0", 0, 7) is None
           and not _textlike(ladder), "a control code followed by three EUC kana is text by the print grammar (the "
                                      "ladder label, which the plain-text rule refuses); two kana are not")
+    for raw in (ladder, b"\x0b\xa5\xe1\xa5\xe2\xa5\xab\xa5\xc6\xa5\xb9\xa5\xc8"):     # 0x006899D0, 0x00688B58 (VT-led)
+        line = "# a developer string? reads as " + _euc_hint(raw)
+        check(len(line.splitlines()) == 1 and ("\u30cf" in line or "\u30e1" in line) and "\u27e6" in line,
+              f"the reading hint of {raw[:2].hex()}... stays one line for universal-newline readers and editors "
+              f"(a raw CR or vertical tab there split the comment and its tail imported as the string's text)")
     codec = textcodec.UsCodec()
     for raw in (SAVE_PROMPT, SKIP_PROMPT, HIST_PROMPT, b"#\x19\x03x", b"\xa4\xa6\x0c\x20\x20\x20\xe9"):
         check(codec.from_text(show(codec, raw)) == raw, f"show() is exact for {raw[:12]!r}...")

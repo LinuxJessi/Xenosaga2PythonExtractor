@@ -312,7 +312,8 @@ def _jp_hint(s: bytes) -> str:
         jp = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF or 0x3000 <= ord(c) <= 0x303F
                  or 0xFF01 <= ord(c) <= 0xFF5E for c in t)
         if jp >= 2 and 2 * jp >= len(t.replace(" ", "")):
-            return f"#{tag}: " + t.replace("\n", " ").replace("\r", " ")
+            from exetext import hint_safe
+            return f"#{tag}: " + hint_safe(t.replace("\n", " ").replace("\r", " "))
     return ""
 
 
