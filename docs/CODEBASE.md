@@ -92,6 +92,18 @@ The Episode I kit's rules, kept (the first one with three packages added):
 | `toolfind.py` | finds ffmpeg: the copy bundled under `tools/` first, then PATH |
 | `build.py` | builds the double-click bundle with PyInstaller (`packaging/`) |
 
+## Build and demo scripts (`tools/`)
+
+Not part of the app or the bundle; each takes the disc images and output
+folders as arguments and runs the kit from the repository it sits in.
+
+| Script | What it does |
+|---|---|
+| `tools/langtest/langtest.sh` | builds the LANGTEST disc from the retail Disc 1 with kit commands only, then runs `langtest-verify.py` on it ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)) |
+| `tools/langtest/langtest-verify.py` | the read-back checks: encoded strings, untouched strings, font cells |
+| `tools/demo/motion.sh` | the motion demo: three models with clips, read-back checks and contact sheets (`motion/make_demo.py`), the Khronos validator and Blender when present ([MOTION.md](MOTION.md)) |
+| `tools/demo/texture-import.sh` | the texture demo: `textures/paint.py` edits four pictures, `texture-import` writes them onto a copy, `textures/checks.py` re-extracts and checks ([MODDING.md](MODDING.md#editing-textures-texture-import)) |
+
 ## The GUI reads the CLI
 
 `gui.py` does not list the commands itself. When it starts it asks

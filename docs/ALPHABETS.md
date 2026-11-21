@@ -394,7 +394,20 @@ with `### @0x0068b678 max 15 bytes` `Saving...` → `በማስቀመጥ ላይ..
 ### The commands
 
 Every command and its output went into `build.log`; the disc builds from
-them alone (about two minutes). Fonts from `/System/Library/Fonts`.
+them alone (about two minutes). Fonts from `/System/Library/Fonts`. The
+whole build, with the translation step and the checks, is
+`tools/langtest/langtest.sh` in this repository:
+
+```sh
+tools/langtest/langtest.sh "Disc 1.iso" langtest/      # trees, fonts, build.log; discs/ and previews/ inside
+```
+
+It needs the four macOS system fonts below (`LANGTEST_FONTS` names another
+folder holding the same files) and room for two disc copies at once; the
+intermediate copies are removed as it goes, and the finished image is left in
+`langtest/discs/` (`LANGTEST_DISCS` for another folder).
+`tools/langtest/langtest-verify.py` holds the checks listed under "Rebuilt
+from the merged kit" below. The commands it runs:
 
 ```sh
 R="…(USA) (Disc 1).iso"; F=/System/Library/Fonts
@@ -448,9 +461,10 @@ image's sha256 (512e728b...) was the same before and after.
 **Rebuilt from the merged kit.** After the three work items (the alphabets,
 the executable strings, this test) were merged on one branch, the disc was
 built again from a fresh export of the retail Disc 1, with the commands
-above and nothing else, by one shell script that also writes the
-translations into the exported tree (each block must still hold the retail
-English it replaces) and checks the result. The first run stopped at the
+above and nothing else, by one shell script (now
+`tools/langtest/langtest.sh`) that also writes the translations into the
+exported tree (each block must still hold the retail English it replaces)
+and checks the result. The first run stopped at the
 Amharic scan: the typed-character check, added to `lang-scan` after this
 test's first build, took the untouched developer strings of `BOOT.exe.txt`
 (`£`, `§`, `Ä`, `Ø`, a no-break space) for typed text and refused the
@@ -476,6 +490,15 @@ checks on the finished image:
 The image came out byte-identical to the rebuild booted above (sha256
 5a309d13...), so what the captures of the rebuild show is what these bytes
 draw. The merged build itself has not been booted again.
+
+**Rebuilt on the release branch.** With the text-coverage work merged as
+well (executable strings read by the print function's grammar, tree format
+2), `tools/langtest/langtest.sh` built the disc again from the retail Disc 1
+in about two minutes, and the checks passed: the 16 strings as encoded, the
+fonts as above, 12,779 untouched strings in 496 text files and 4,222 in the
+three executable trees (more than before because the executable scan now
+reads strings with control codes). The image is again byte-identical to the
+booted rebuild (sha256 5a309d13...). Not booted again.
 
 ### The field window's width, measured on the retail disc
 

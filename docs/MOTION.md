@@ -237,7 +237,9 @@ non-stub clip.
 Checked (number and image): the self-test builds a skinned `.glb`, adds
 synthetic clips, reads the file back, samples it the glTF way and compares
 every node's world matrix with `xap.pose` (1e-5). On the demo files
-(`shion00`, `kosmos00`, `jr00`, 14 animations) the read-back world matrices
+(`shion00`, `kosmos00`, `jr00`, 14 animations; `tools/demo/motion.sh "Disc
+1.iso" out/dump demo-motion/` builds them and writes these numbers to
+`report.txt`) the read-back world matrices
 agree with the engine formula to 5e-7 (3e-7 of the body height), bone lengths
 of joints whose T and S are not keyed stay within 3e-8, the field clips loop
 exactly, the Khronos glTF validator reports no error, warning or info, and

@@ -218,6 +218,11 @@ and model images) takes 26 seconds and writes nothing.
 band in all four of her texture files, her arm texture in green, a ring on
 her chest texture through a `.glb`, and the title menu words tinted) is
 written and verified on disc copies only; the PCSX2 boot check is pending.
+`tools/demo/texture-import.sh "Disc 1.iso" out/ demo-textures/` runs it from
+a full `dump` in `out/`: paint (a script stands in for the image editor),
+dry run, import onto a copy in `demo-textures/discs/`, re-extract, and the
+checks (before/after pictures, unrelated objects byte-identical, every copy
+of an edited picture changed, an unedited full tree writes nothing).
 Also unverified: whether the engine reads palettes through `cbp` or through
 palx/paly (they agree for every real entry, so in-place writes are right
 either way), how the engine treats the title sheet's alpha values above 128,
@@ -862,10 +867,10 @@ backdrop `yajima\titlebg2.bin`, and the shop signs and digits in the
 quest-board pictures (`iwase\img\citizen\c01`-`c50.xtx`,
 `iwase\img\item\item00`-`item17.xtx`). `browse` writes all of them as
 viewable files (the pages inside effect files and the backdrop under
-`textures_png/_embedded`); the kit on this branch has no checked writer for
-them (`recolor` changes colours only, `patch` replaces a whole file without
-checking it; the `texture-import` branch, not merged here, writes txy pages
-and the quest-board pictures).
+`textures_png/_embedded`). `texture-import` writes edited txy pages,
+embedded pages and UI sheets such as the quest-board pictures back
+([Editing textures](#editing-textures-texture-import); checked on disc
+copies, not yet seen in the running game).
 
 Map and model textures were surveyed on 2026-11-20 by OCR of every decoded
 texture: at least 109 `.txy` files carry words. OCR misses small, stylised
