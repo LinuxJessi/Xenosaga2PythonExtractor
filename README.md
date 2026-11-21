@@ -51,9 +51,13 @@ examples.*
 **The app.** Version tags build a bundle for Windows and macOS with GitHub
 Actions (`.github/workflows/release.yml`), attached to the release on the
 Releases page: `Xenosaga-II-Extractor-win64.zip` and
-`Xenosaga-II-Extractor-macos.zip`. They carry Python, the packages and ffmpeg;
-unzip and double-click. The macOS app is ad-hoc signed, not notarized: the
-first time, right-click it and choose Open.
+`Xenosaga-II-Extractor-macos.zip`. They carry Python, the packages and ffmpeg,
+so nothing else needs installing. On **Windows**, right-click the zip ▸
+Extract All, open the folder and double-click `Xenosaga-II-Extractor.exe`
+(`START HERE.txt` beside it says the same). The program is not code-signed, so
+the first time Windows may say "Windows protected your PC": click More info ▸
+Run anyway. On **macOS** the app is ad-hoc signed, not notarized: the first
+time, right-click it and choose Open.
 
 **From a source checkout**, double-click `launch.command` (macOS),
 `launch.bat` (Windows) or `launch.sh` (Linux), or run `python gui.py`. The

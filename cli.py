@@ -757,6 +757,16 @@ def main(argv=None) -> int:
     p = sub.add_parser("self-test", help="run every module's self-test")
     p.set_defaults(func=cmd_self_test)
 
+    if (argv is None and len(sys.argv) == 1 and getattr(sys, "frozen", False)
+            and os.name == "nt"):        # double-clicked in Explorer: say where to go, don't flash shut
+        ap.print_help()
+        print("\nThis is the command-line tool. For the window, double-click "
+              "Xenosaga-II-Extractor.exe next to it.")
+        try:
+            input("Press Enter to close.")
+        except EOFError:
+            pass
+        return 0
     args = ap.parse_args(argv)
     return args.func(args)
 

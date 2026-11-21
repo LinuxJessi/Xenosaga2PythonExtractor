@@ -42,6 +42,32 @@ BUNDLE = DIST / f"{NAME}-{PLATFORM}"
 APP = DIST / f"{NAME}.app"  # macOS only
 
 
+START_HERE = """Xenosaga II Extractor
+====================
+
+1. Double-click  Xenosaga-II-Extractor.exe
+   Your web browser opens the kit's window (it runs on your own computer;
+   nothing is uploaded). Keep the program running while you use it.
+
+2. If Windows says "Windows protected your PC": click "More info", then
+   "Run anyway". The program is not code-signed, so Windows warns the
+   first time.
+
+3. In the window, follow "Start here": unpack your disc images (.iso),
+   then convert them. You need your own copy of the game; no game data
+   comes with the kit.
+
+Do not run it from inside the zip: extract the whole folder first
+(right-click the zip > Extract All).
+
+xeno-cli.exe is the command-line version, for typing commands in a
+terminal. The _internal folder holds what the program needs; leave it
+next to the two .exe files.
+
+Help and pictures: https://github.com/LinuxJessi/Xenosaga2PythonExtractor
+"""
+
+
 def _run_selftest(argv) -> bool:
     try:
         r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -103,6 +129,8 @@ def main() -> int:
         print("self-tests from the bundle:")
         ok = _run_selftest([str(cli), "self-test"]) and ok
         ok = _run_selftest([str(gui), "--self-test"]) and ok
+    if ok and sys.platform == "win32":
+        (BUNDLE / "START HERE.txt").write_text(START_HERE, encoding="utf-8")
     if ok:
         what = APP.name if sys.platform == "darwin" else f"{BUNDLE.name}/ (zip it)"
         print(f"\nDone. Ship {what}.")

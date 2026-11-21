@@ -1,5 +1,15 @@
 # Updates
 
+## 2026-11-20 (v1.0.1): easier on Windows
+
+* The Windows zip unpacks into one folder with a `START HERE.txt` (which
+  program to open, the "Windows protected your PC" warning, extract first).
+* `xeno-cli.exe` double-clicked from Explorer shows its help and waits for
+  Enter instead of flashing shut, and points to the window program.
+* Fixes found by the first release build: UTF-8 output on any Windows console
+  code page, the disc image closed after `texture-import`, the bundle's
+  self-tests.
+
 ## 2026-11-20 (v1.0.0): first public release
 
 * **[FUN-FACTS.md](FUN-FACTS.md)**: sixty-odd things the discs give away,
