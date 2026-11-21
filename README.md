@@ -315,27 +315,43 @@ limit and the battle banners: [docs/MODDING.md](docs/MODDING.md#text-text-export
 
 ## Audio samples
 
-Short previews decoded by the kit from Disc 1 (25-second BGM excerpts,
-full-length effects and voice lines). GitHub plays these on click or downloads them.
+Press play: these are the kit's own output from Disc 1. The five songs are
+25-second excerpts of `spu2synth.py` rendering the game's MIDI through its own
+KORG samples and the SPU2 reverb (a render, not a recording). The last clip
+holds three voice lines from real-time cutscenes and two sound effects. The
+picture behind each song is the kit's render of a map, not where the song plays.
 
-| | Source | Sample |
-|---|---|---|
-| BGM | `music/001_milchia` | [bgm_001_milchia.mp3](docs/samples/bgm_001_milchia.mp3) |
-| BGM | `music/005_morgenroete` | [bgm_005_morgenroete.mp3](docs/samples/bgm_005_morgenroete.mp3) |
-| BGM | `music/009_lost_jerusalem` | [bgm_009_lost_jerusalem.mp3](docs/samples/bgm_009_lost_jerusalem.mp3) |
-| BGM | `music/103_kukai` | [bgm_103_kukai.mp3](docs/samples/bgm_103_kukai.mp3) |
-| BGM | `music/111_moby-dick` | [bgm_111_moby-dick.mp3](docs/samples/bgm_111_moby-dick.mp3) |
-| Sound effect | `CFS_SE.vsf` cue CFS00004 | [sfx_CFS_SE_CFS00004.mp3](docs/samples/sfx_CFS_SE_CFS00004.mp3) |
-| Sound effect | `CFS_SE.vsf` cue CFS00010 | [sfx_CFS_SE_CFS00010.mp3](docs/samples/sfx_CFS_SE_CFS00010.mp3) |
-| Event voice line | real-time event `S05_06_05` (`sc8047`), line 04 | [voice_S05_06_05_04_KOS_MOS.mp3](docs/samples/voice_S05_06_05_04_KOS_MOS.mp3) |
-| Event voice line | real-time event `S05_06_05` (`sc8047`), line 05 | [voice_S05_06_05_05_Thank_you.mp3](docs/samples/voice_S05_06_05_05_Thank_you.mp3) |
-| Event voice line | real-time event `S05_02_00` (`sc8046`), line 07 | [voice_S05_02_00_07_Oh_be_a_man_already.mp3](docs/samples/voice_S05_02_00_07_Oh_be_a_man_already.mp3) |
+**001 Milchia** · `music/001_milchia`
 
-The BGM is the kit's own render of the game's MIDI through its own samples,
-not a recording; [docs/MUSIC.md](docs/MUSIC.md) says how it was checked
-against a game rip and where it still differs. The full sets (music, sound
-banks, every cutscene voice line) come out of `browse --kinds music,audio` and
-`dialogue --voice` on your own disc.
+https://github.com/user-attachments/assets/ca3b6e3f-138f-421a-91ea-26ad1ca82257
+
+**005 Morgenröte** · `music/005_morgenroete`
+
+https://github.com/user-attachments/assets/7f11c261-400f-4f18-b98a-4c304b2cb50a
+
+**009 Lost Jerusalem** · `music/009_lost_jerusalem`
+
+https://github.com/user-attachments/assets/8418837c-9230-4e25-8d79-70e695c1ff59
+
+**103 Kukai** · `music/103_kukai`
+
+https://github.com/user-attachments/assets/0699e143-11b2-403c-bb2b-5ecea38d630c
+
+**111 Moby-Dick** · `music/111_moby-dick`
+
+https://github.com/user-attachments/assets/0cea13f0-e4ea-4aeb-96f4-bf66825a333b
+
+**Voices and effects**: "KOS-MOS…", "Thank you." (event `S05_06_05`), "Oh, be a man
+already!" (event `S05_02_00`), and cues CFS00004 and CFS00010 from `CFS_SE.vsf`
+
+https://github.com/user-attachments/assets/ae93d8b2-e8d7-42c3-921b-201742139347
+
+The same clips as MP3 files are in [docs/samples/](docs/samples/), and
+[docs/gallery/make_audio_videos.py](docs/gallery/make_audio_videos.py) makes
+these videos from them. [docs/MUSIC.md](docs/MUSIC.md) says how the renders
+were checked against a game rip and where they still differ. The full sets
+(music, sound banks, every cutscene voice line) come out of
+`browse --kinds music,audio` and `dialogue --voice` on your own disc.
 
 ## Movies, fonts and menus
 
