@@ -252,8 +252,9 @@ COMMAND_CARDS = {
                    "plain text files you can edit in any text editor.",
         "needs": "A disc image.",
         "makes": "A text folder, one UTF-8 file per text object. Use an empty folder of its own.",
-        "next": "Edit the files in this folder (lines starting with # are notes), then use <b>Put edited "
-                "text back</b> with the same disc and this folder.",
+        "next": "To find a line, search this folder for a few of its words (most text editors have "
+                "<em>Find in Files</em>) and edit it in place (lines starting with # are notes), then use <b>Put edited text back</b> with the same disc and "
+                "this folder.",
         "output": ("out", ""),
     },
     "text-import": {
@@ -418,8 +419,12 @@ COMMAND_HELP = {
     "text-export": "Write the game's text to an editable UTF-8 folder, one file per text object: dialogue, "
                    "menus (item, skill and location names, help, the database, the Skill Tutorial), the battle "
                    "names and messages, the battle banners, the quest, citizen and treasure text, movie "
-                   "subtitles and the save's title in the memory-card browser. Lines starting with "
-                   "<code>#</code> are notes. Text inside the game program is <em>exe-export</em>.",
+                   "subtitles and the save's title in the memory-card browser. Each file is named after the "
+                   "game file it comes from, inside a <code>chain0</code>, <code>chain1</code> or "
+                   "<code>chain2</code> folder (the data area), so the quickest way to find a line is to "
+                   "search the whole folder for a few of its words. In most files each line of text sits under "
+                   "its own <code>###</code> heading; lines starting with <code>#</code> are notes. "
+                   "Text inside the game program is <em>exe-export</em>.",
     "text-import": "Writes the edited text folder into a <em>copy</em> of the disc. Each kind of text keeps "
                    "to the room the game allows for it; anything past a limit is refused and nothing is "
                    "written. More detail: dialogue and menus must fit their space, a longer battle string "
@@ -508,7 +513,10 @@ GLOSSARY = [
 # suggest (the file name a Save-as picker adds), prefill (the starting value:
 # {out} = the suggested output folder, {disc} = the first disc found, {discs} =
 # every disc found, "" = start empty), choices (value -> plain text for a list
-# box), tri (three plain choices for an on/off pair of flags).
+# box), tri (three plain choices for an on/off pair of flags), advanced (True:
+# shown under the card's "More settings", for fields most people leave alone),
+# required_unless (marks an optional option REQUIRED, except when one of these
+# other fields of the card is filled in or ticked).
 FIELD_HINTS = {
     "iso": {"label": "Disc image", "pick": "file", "filter": "iso",
             "help": "One disc image (.iso): Disc 1 or Disc 2.",
@@ -569,7 +577,9 @@ FIELD_HINTS = {
                                  "images": "photos (JPEG)", "movies": "movies",
                                  "small": "small files (logos, save icon, packs)"}},
     "browse.movie_audio": {"label": "Movie sound", "help": "Which sound track the MP4 movies get.",
-                           "choices": {"adx": "stereo, as AAC", "ac3": "5.1 surround track, copied as is",
+                           "choices": {"adx": "the stereo track (ADX, the movies' own sound format), "
+                                              "converted to AAC",
+                                       "ac3": "the 5.1 surround track (AC-3), copied as is",
                                        "both": "both tracks"}},
     "model.path": {"label": "Model's in-game path", "placeholder": "e.g. model\\char\\pc\\kosmos00.pxy",
                    "help": "Where the model sits on the disc. Find paths with <b>List every file on the disc</b> "
@@ -595,8 +605,8 @@ FIELD_HINTS = {
                     "help": "Optional folder: also writes natives.tsv, one readable listing per script "
                             "(listings/) and strings.tsv."},
     "recolor.out": {"label": "Output disc", "suggest": "modded-recolor.iso", "prefill": "{out}/modded-recolor.iso",
-                    "help": "The new disc image to write. Empty = preview only, nothing written. Your original "
-                            "disc is never changed."},
+                    "help": "The new disc image to write. Empty = nothing is written (tick Dry run to only "
+                            "look). Your original disc is never changed."},
     "recolor.preset": {"label": "Preset", "help": "A ready-made set of textures to recolour.", "choices": {"": "KOS-MOS's hair (when no rules are given)",
                                                       "kosmos-hair": "KOS-MOS's hair"}},
     "recolor.rule": {"label": "Rules", "placeholder": "e.g. kosmos*_hair_col=all",
@@ -612,43 +622,49 @@ FIELD_HINTS = {
                             "of the named textures. Needs an Output disc."},
     "texture-import.out": {"label": "Output disc", "suggest": "modded-textures.iso",
                            "prefill": "{out}/modded-textures.iso",
-                           "help": "The new disc image to write. Not needed for Dry run or Self-check only."},
+                           "required_unless": ["dry_run", "verify_roundtrip"],
+                           "help": "The new disc image to write. Can stay empty only when Dry run or Self-check only "
+                                   "is ticked."},
     "texture-import.tree": {"label": "Edited browse folder", "pick": "dir", "prefill": "",
+                            "required_unless": ["textures", "xtx", "models", "verify_roundtrip"],
                             "placeholder": "a copy of your browse folder, with edited PNGs",
                             "help": "Run step 3 (pictures, menu pictures, 3D models), copy its browse folder, "
                                     "paint over PNGs in the copy and give the copy here. Only pictures that "
-                                    "differ from the disc are written."},
-    "texture-import.textures": {"label": "Pictures folder", "pick": "dir",
+                                    "differ from the disc are written. (Under More settings you can give "
+                                    "single folders instead.)"},
+    "texture-import.textures": {"label": "Pictures folder", "pick": "dir", "advanced": True,
                                 "help": "Use this textures_png folder instead of the one in the edited browse folder."},
-    "texture-import.xtx": {"label": "Menu pictures folder", "pick": "dir",
+    "texture-import.xtx": {"label": "Menu pictures folder", "pick": "dir", "advanced": True,
                            "help": "Use this xtx folder instead of the one in the edited browse folder."},
-    "texture-import.models": {"label": "Models folder", "pick": "dir",
+    "texture-import.models": {"label": "Models folder", "pick": "dir", "advanced": True,
                               "help": "Use this folder of .glb models (their images) instead of the one in the "
                                       "edited browse folder."},
-    "texture-import.palette": {"label": "Shared colours",
+    "texture-import.palette": {"label": "Shared colours", "advanced": True,
                                "help": "Many textures share one colour table (palette).",
                                "choices": {"auto": "keep the colours of the other textures that share it",
                                            "keep": "never change a colour table",
                                            "joint": "recompute the table for every texture that shares it"}},
-    "texture-import.dither": {"label": "Dithering",
+    "texture-import.dither": {"label": "Dithering", "advanced": True,
                               "help": "How colours are reduced when a texture has only a few to choose from.",
                               "choices": {"none": "none", "fs": "Floyd-Steinberg (mixes pixels to fake more colours)"}},
-    "texture-import.sweep": {"label": "Other copies",
+    "texture-import.sweep": {"label": "Other copies", "advanced": True,
                              "help": "The disc holds several copies of many pictures.",
                              "choices": {"pixels": "update every copy with the same pixels",
                                          "name": "only copies with the same texture name",
                                          "none": "only the picture you edited"}},
-    "texture-import.mips": {"label": "Smaller versions",
+    "texture-import.mips": {"label": "Smaller versions", "advanced": True,
                             "help": "Textures carry smaller copies of themselves (mip levels) for distant objects.",
                             "choices": {"rebuild": "rebuild them from your edit", "keep": "leave them as they are"}},
-    "texture-import.grow": {"help": "Let a compressed file that gets bigger move to the end of the disc image "
-                                    "(yajima\\titleobj.xtx needs it; not yet seen in the running game)."},
+    "texture-import.grow": {"advanced": True,
+                            "help": "Only if a run says an edited file no longer fits its space: let that file "
+                                    "move to the end of the disc image. The kit checks the moved file, but such "
+                                    "a disc has not yet been tried in the game itself."},
     "texture-import.dry_run": {"help": "List what would change and write nothing. A safe first try."},
     "texture-import.preview": {"help": "Optional: writes before/after PNGs of every changed picture here."},
-    "texture-import.report": {"label": "Change list", "pick": "save", "filter": "csv",
+    "texture-import.report": {"label": "Change list", "pick": "save", "filter": "csv", "advanced": True,
                               "suggest": "textures.csv", "prefill": "",
                               "help": "Where to save the CSV of changed pictures. Empty = next to the output disc."},
-    "texture-import.verify_roundtrip": {"label": "Self-check only",
+    "texture-import.verify_roundtrip": {"label": "Self-check only", "advanced": True,
                                         "help": "Write nothing: re-encode every texture on the disc from its own "
                                                 "picture and check the bytes come back identical. This checks "
                                                 "the kit, not your edits."},
@@ -707,19 +723,20 @@ FIELD_HINTS = {
                   "help": "One per line: the data area (chain0 = shared data on both discs; chain1, chain2 = "
                           "Disc 1's, Disc 2's movies and voices), a colon, the in-game path, =, then your file."},
     "patch.grow": {"help": "Let a file bigger than its space move to the end of the disc image."},
-    "patch.relocate": {"label": "Always move (test)",
+    "patch.relocate": {"advanced": True, "label": "Always move (test)",
                        "help": "Put every replacement at the end of the image even if it fits (to test moving)."},
     "lang-scan.iso": {"help": "The USA disc image the translation is for."},
-    "lang-scan.text": {"label": "Translated text folder", "prefill": "{out}/text",
+    "lang-scan.text": {"label": "Translated text folder", "prefill": "",
+                       "placeholder": "your translated copy of the text folder",
                        "help": "Your translated copy of the <b>Export the game text to edit</b> folder (one per line for "
                                "more than one)."},
     "lang-scan.font": {"filter": "", "help": "A .ttf, .otf or .ttc font that has your alphabet; the letters are "
                                              "drawn from it."},
-    "lang-scan.face": {"label": "Font number in a .ttc",
+    "lang-scan.face": {"advanced": True, "label": "Font number in a .ttc",
                        "help": "Only for .ttc collections: which font inside it (0 = the first)."},
     "lang-scan.px": {"label": "Letter size (pixels)",
                      "help": "Font size in pixels; 18 puts Latin capitals where the game's own are."},
-    "lang-scan.baseline": {"label": "Baseline row",
+    "lang-scan.baseline": {"advanced": True, "label": "Baseline row",
                            "help": "The pixel row the letters stand on in the 24-pixel-high cell."},
     "lang-scan.script": {"label": "Alphabet code", "placeholder": "e.g. Arab, Deva, Geor",
                          "help": "Optional: a four-letter ISO 15924 alphabet code; only words in this alphabet "
@@ -728,33 +745,34 @@ FIELD_HINTS = {
                            "help": "Optional: a language code (BCP-47), so letters join the way that language "
                                    "writes them."},
     "lang-scan.rtl": {"label": "Right to left", "help": "The alphabet is written right to left (Arabic, Hebrew...)."},
-    "lang-scan.cells": {"label": "Hand-drawn letters (PNG)", "pick": "file", "filter": "png",
+    "lang-scan.cells": {"advanced": True, "label": "Hand-drawn letters (PNG)", "pick": "file", "filter": "png",
                         "help": "Optional, instead of a font: a PNG sheet of hand-drawn 20x24-pixel letter cells."},
-    "lang-scan.keys": {"label": "Letters in that sheet", "pick": "file",
+    "lang-scan.keys": {"advanced": True, "label": "Letters in that sheet", "pick": "file",
                        "help": "With hand-drawn letters: a text file naming the letter in each cell, one per line."},
-    "lang-scan.prefer": {"label": "Codes to fill first",
+    "lang-scan.prefer": {"advanced": True, "label": "Codes to fill first",
                          "help": "Text with tight byte limits takes one-byte codes first anyway.",
                          "choices": {"single": "one-byte codes", "pair": "two-byte codes",
                                      "fixed": "fixed-width two-byte cells (for wide letters)"}},
-    "lang-scan.keep": {"label": "Letters to keep", "placeholder": "e.g. éèàç",
+    "lang-scan.keep": {"advanced": True, "label": "Letters to keep", "placeholder": "e.g. éèàç",
                        "help": "Optional: accented Latin letters whose cells must stay as they are."},
-    "lang-scan.reclaim": {"label": "Free reserved codes", "placeholder": "e.g. FC",
+    "lang-scan.reclaim": {"advanced": True, "label": "Free reserved codes", "placeholder": "e.g. FC",
                           "help": "Optional: reserved one-byte codes to free up, in hex, comma-separated."},
-    "lang-scan.prop_only": {"label": "Narrow cells only",
+    "lang-scan.prop_only": {"advanced": True, "label": "Narrow cells only",
                             "help": "Refuse letters too wide for the narrow (proportional) cells."},
-    "lang-scan.tight": {"label": "Touching letters",
+    "lang-scan.tight": {"advanced": True, "label": "Touching letters",
                         "help": "Draw ink to the cell edge so joining letters touch (worked out from the code, not "
                                 "yet seen in the game)."},
-    "lang-scan.space_px": {"help": "Width of a space, for the line-width report."},
-    "lang-scan.font0": {"label": "Earlier font0.us", "pick": "file",
+    "lang-scan.space_px": {"advanced": True, "help": "Width of a space, for the line-width report."},
+    "lang-scan.font0": {"advanced": True, "label": "Earlier font0.us", "pick": "file",
                         "help": "For a second alphabet: the font0.us an earlier scan wrote (give font1.us too)."},
-    "lang-scan.font1": {"label": "Earlier font1.us", "pick": "file",
+    "lang-scan.font1": {"advanced": True, "label": "Earlier font1.us", "pick": "file",
                         "help": "For a second alphabet: the font1.us an earlier scan wrote (give font0.us too)."},
-    "lang-scan.extend": {"label": "Earlier glyphset.json", "pick": "file", "filter": "json",
+    "lang-scan.extend": {"advanced": True, "label": "Earlier glyphset.json", "pick": "file", "filter": "json",
                          "help": "For a second alphabet: the glyphset.json an earlier scan wrote; its codes are kept."},
     "lang-scan.out": {"label": "Folder to create", "prefill": "{out}/lang",
                       "help": "Where the new fonts, glyphset.json and the preview sheet go."},
-    "lang-encode.text": {"label": "Translated text folder", "prefill": "{out}/text",
+    "lang-encode.text": {"label": "Translated text folder", "prefill": "", "pick": "dir",
+                         "placeholder": "your translated copy of the text folder",
                          "help": "Your translated copy of the <b>Export the game text to edit</b> folder."},
     "lang-encode.out": {"label": "Folder to create", "prefill": "{out}/text-encoded",
                         "help": "The encoded text folder; <b>Put edited text back</b> reads it."},
@@ -847,7 +865,13 @@ def _field(name: str, a: argparse.Action, writes_iso: bool) -> dict:
         "choices": [str(c) for c in a.choices] if a.choices else None,
         "label": hint.get("label") or a.dest.replace("_", " ").capitalize(),
         "placeholder": hint.get("placeholder", ""),
+        "advanced": bool(hint.get("advanced")),
     }
+    if hint.get("required_unless"):
+        # Needed for a real run, but the command accepts it missing when one
+        # of these other fields is set (a dry run, a self-check, an override).
+        f["required"] = True
+        f["required_unless"] = list(hint["required_unless"])
     labels = hint.get("choices")
     if a.dest == "kinds" and name == "browse":
         f["kind"] = "kinds"
@@ -863,8 +887,10 @@ def _field(name: str, a: argparse.Action, writes_iso: bool) -> dict:
     pick = hint.get("pick")
     suggest = hint.get("suggest")
     if a.dest == "out" and writes_iso:
+        # The shared "out" hint says "Output folder"; a disc-writing card's
+        # --out is a file, so only its own command.out label may replace this.
         pick = "save"
-        f["label"] = hint.get("label") or "Output disc"
+        f["label"] = FIELD_HINTS.get(f"{name}.out", {}).get("label") or "Output disc"
         suggest = suggest or "modded.iso"
         f["filter"] = "iso"
     elif a.dest == "out" and re.search(r"\bPNG to write\b", a.help or "") and not pick:
@@ -972,6 +998,28 @@ def build_argv(cmd: dict, form: dict) -> List[str]:
             v = v[0] if v else ""
         return (v or "").strip()
 
+    by_dest = {f["dest"]: f for f in cmd["fields"]}
+
+    def excused(f) -> bool:
+        """A required_unless field may be empty when one of its listed fields is set."""
+        for d in f.get("required_unless") or ():
+            g = by_dest.get(d)
+            if g is None:
+                continue
+            if g["kind"] in ("flag", "flag-off"):
+                if _truthy(val(d)) != (g["kind"] == "flag-off"):
+                    return True
+            elif val(d):
+                return True
+        return False
+
+    def missing(f) -> str:
+        if not f.get("required_unless"):
+            return f"{f['label']} is required"
+        others = [by_dest[d]["label"] + (" (under More settings)" if by_dest[d].get("advanced") else "")
+                  for d in f["required_unless"] if d in by_dest]
+        return f"{f['label']} is required (unless you tick or fill in {' or '.join(others)})"
+
     argv = [*CLI_ARGV, cmd["name"]]
     positional: List[str] = []
     for f in cmd["fields"]:
@@ -1002,8 +1050,8 @@ def build_argv(cmd: dict, form: dict) -> List[str]:
             continue
         if f["kind"] == "multi":
             items = [s.strip() for s in re.split(r"[\n;]", val(key)) if s.strip()]
-            if f["required"] and not items:
-                raise ValueError(f"{f['label']} is required")
+            if f["required"] and not items and not excused(f):
+                raise ValueError(missing(f))
             if f["positional"]:
                 positional += items
             else:
@@ -1012,9 +1060,11 @@ def build_argv(cmd: dict, form: dict) -> List[str]:
             continue
         v = val(key)
         if not v:
-            if f["required"]:
-                raise ValueError(f"{f['label']} is required")
+            if f["required"] and not excused(f):
+                raise ValueError(missing(f))
             continue
+        if "\n" in v or "\r" in v:
+            raise ValueError(f"{f['label']} takes one value on one line")
         if f["type"] == "int":
             try:
                 int(v, 0)
@@ -1062,12 +1112,11 @@ def reveal_argv(path: str) -> Optional[List[str]]:
     opened with an application. None when the path is not there."""
     p = Path(path)
     if not p.exists():
-        p = p.parent
-        if not p.is_dir():
-            return None
+        return None
     if sys.platform == "darwin":
-        # `open` on a folder named *.app would start it; -R only shows it.
-        return ["open", str(p)] if p.is_dir() and p.suffix.lower() != ".app" else ["open", "-R", str(p)]
+        # `open` on a folder with a suffix may hand it to an app (a bundle:
+        # .app, .pkg, .workflow, ...); -R only shows it. Plain folders open.
+        return ["open", str(p)] if p.is_dir() and not p.suffix else ["open", "-R", str(p)]
     if os.name == "nt":
         return ["explorer", str(p)] if p.is_dir() else ["explorer", f"/select,{p}"]
     return ["xdg-open", str(p if p.is_dir() else p.parent)]
@@ -1402,6 +1451,11 @@ INDEX_HTML = r"""<!doctype html>
 .card .row .check-wrap { align-items: flex-start; }
 .card .row .check-wrap input { margin-top: 1px; flex: none; }
 .card textarea.paths { white-space: pre-wrap; word-break: break-all; }
+.card textarea.one { resize: none; overflow: hidden; min-height: 0; }
+.card-body details.adv { margin: 4px 0 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.card-body details.adv > summary { cursor: pointer; color: var(--accent); font-size: 12px; margin-bottom: 6px; }
+.card-body details.adv > summary .n { color: var(--muted); }
+#groups .loading { color: var(--muted); font-size: 13px; padding: 8px 0; }
 .card-head { align-items: flex-start; }
 .card-head .head-text { flex: 1; min-width: 0; }
 .card-head .head-text h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -1483,17 +1537,19 @@ INDEX_HTML = r"""<!doctype html>
       <h2>How to use this window</h2>
       <ol>
         <li><b>Check your disc images.</b> <span id="howto-discs">Looking for them…</span></li>
-        <li><b>Unpack:</b> open <a data-goto="dump">1 · Unpack the discs</a> below and press Run.</li>
+        <li><b>Unpack:</b> in <a data-goto="dump">1 · Unpack the discs</a> (already open below), press Run.</li>
         <li><b>Convert:</b> then <a data-goto="browse">3 · Convert to files you can open</a>, with the same folder.
           Pictures, models, sound and text land in its <code>browse</code> folder.</li>
       </ol>
-      <p>After that, use any section further down. Each card says what it needs and what it makes; open one
-        to see its settings. Fields marked <span style="color:var(--accent-warm)">REQUIRED</span> must be filled
-        in, the others can stay as they are.</p>
+      <p>After that, use any section further down. Each card says what it needs and what it makes; click its
+        title to open it. Fields marked <span style="color:var(--accent-warm)">REQUIRED</span> must be filled in
+        (a field's note says if a tick box lets it stay empty); the others can stay as they are. Settings most
+        people never change are folded away under <b>More settings</b>.</p>
       <p class="safe">Your original disc images are never changed: every card that edits the game writes a new copy.</p>
       <details><summary>Words you will see</summary><dl id="glossary"></dl></details>
     </div>
-    <div id="groups"></div>
+    <div id="groups"><p class="loading">Loading the cards…</p><noscript><p>This window needs JavaScript
+      turned on in your browser.</p></noscript></div>
   </section>
   <aside id="right">
     <h2>Environment</h2>
@@ -1756,10 +1812,14 @@ function fieldHtml(f, d) {
   }
   const value = escapeHtml(defaultFor(f, d)), ph = escapeHtml(f.placeholder || '');
   const isPath = !!f.pick;
+  // A one-value path box is a one-line textarea, so a long path wraps instead of
+  // being cut off (Enter and pasted line breaks are dropped).
   const input = f.kind === 'multi'
     ? `<textarea name="${name}" class="${isPath ? 'paths' : ''}" rows="${Math.max(2, value.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / (isPath ? 56 : 80))), 0))}"
         placeholder="${ph ? ph + ' (one per line)' : 'one per line'}">${value}</textarea>`
-    : `<input type="text" name="${name}" placeholder="${ph}" value="${value}">`;
+    : isPath
+      ? `<textarea name="${name}" class="paths one" rows="1" placeholder="${ph}">${value}</textarea>`
+      : `<input type="text" name="${name}" placeholder="${ph}" value="${value}">`;
   if (!f.pick) return `<div class="row">${label}<div class="field">${input}${help}</div></div>`;
   const btn = {file: 'Choose file…', dir: 'Choose folder…', save: 'Save as…', any: 'Choose…'}[f.pick] || 'Choose…';
   return `<div class="row">${label}<div class="field"><div class="with-pick">${input}
@@ -1771,6 +1831,13 @@ function formBody(form) {
   form.querySelectorAll('input[type=checkbox]').forEach(cb => fd.set(cb.name, cb.checked ? 'on' : ''));
   return new URLSearchParams(fd).toString();
 }
+function fit(t) {
+  if (!t.offsetParent) return;               // hidden (closed card): measured when it opens
+  t.style.height = 'auto'; t.style.height = (t.scrollHeight + t.offsetHeight - t.clientHeight) + 'px';
+}
+function fitAll(root) { root.querySelectorAll('textarea.one').forEach(fit); }
+window.addEventListener('resize', () => document.querySelectorAll('.card.open').forEach(fitAll));
+document.addEventListener('toggle', e => { if (e.target.matches && e.target.matches('details.adv')) fitAll(e.target); }, true);
 function makeCard(c, d) {
   const div = document.createElement('div');
   div.className = 'card'; div.dataset.name = c.name; div.id = 'card-' + c.name;
@@ -1780,18 +1847,25 @@ function makeCard(c, d) {
   const io = (c.needs || c.makes) ? `<dl class="io">${c.needs ? `<dt>Needs</dt><dd>${c.needs}</dd>` : ''}
       ${c.makes ? `<dt>Makes</dt><dd>${c.makes}</dd>` : ''}</dl>` : '';
   const more = c.help ? `<details class="more"><summary>More detail</summary><p class="help">${c.help}</p></details>` : '';
+  const basic = c.fields.filter(f => !f.advanced), extra = c.fields.filter(f => f.advanced);
+  const adv = extra.length ? `<details class="adv"><summary>More settings <span class="n">(${extra.length}, most
+      people leave these as they are)</span></summary>${extra.map(f => fieldHtml(f, d)).join('')}</details>` : '';
   div.innerHTML = `
     <div class="card-head">${step}
       <div class="head-text"><h3>${escapeHtml(c.title)} <span class="cmd" title="The command-line name of this card">${escapeHtml(c.name)}</span>${alias}${tag}</h3>
         <p class="summary">${c.summary}</p></div>
       <span class="badge"></span><span class="chev">▼</span></div>
     <div class="card-body">${io}${more}
-      <form data-cmd="${escapeHtml(c.name)}">${c.fields.map(f => fieldHtml(f, d)).join('')}
+      <form data-cmd="${escapeHtml(c.name)}">${basic.map(f => fieldHtml(f, d)).join('')}${adv}
         <div class="actions"><button type="submit">Run</button>
           <button type="button" class="ghost dryrun" title="Show the command line this card would run, without running it">Show command</button></div>
       </form>
       <div class="result" hidden></div></div>`;
-  div.querySelector('.card-head').addEventListener('click', () => div.classList.toggle('open'));
+  div.querySelector('.card-head').addEventListener('click', () => { div.classList.toggle('open'); fitAll(div); });
+  div.querySelectorAll('textarea.one').forEach(t => {
+    t.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); t.form.requestSubmit(); } });
+    t.addEventListener('input', () => { const v = t.value.replace(/[\r\n]+/g, ''); if (v !== t.value) t.value = v; fit(t); });
+  });
   div.querySelectorAll('button.pick').forEach(btn => btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const el = btn.closest('.row').querySelector(`[name="${btn.dataset.pickFor}"]`);
@@ -1805,6 +1879,7 @@ function makeCard(c, d) {
       onChoose: (p) => {
         if (mode === 'save') p = p.replace(/[\/\\]$/, '') + '/' + fileName;
         if (multi) el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + p; else el.value = p;
+        if (el.classList.contains('one')) fit(el);
       },
     });
   }));
@@ -1828,6 +1903,7 @@ function openCard(name, scroll) {
   const el = cardEls[name];
   if (!el) return;
   el.classList.add('open');
+  fitAll(el);
   if (scroll) el.scrollIntoView({behavior: scroll === 'instant' ? 'auto' : 'smooth', block: 'start'});
 }
 
@@ -1863,6 +1939,7 @@ async function loadStatus() {
   const byName = {};
   s.commands.forEach(c => { byName[c.name] = c; });
   const groups = document.getElementById('groups');
+  groups.textContent = '';
   s.groups.forEach(g => {
     const sec = document.createElement('section');
     sec.className = 'group'; sec.dataset.group = g.id;
@@ -1887,8 +1964,25 @@ document.getElementById('btn-refresh').addEventListener('click', loadStatus);
 # HTTP handler
 # ---------------------------------------------------------------------------
 
+def request_allowed(host: str, origin: Optional[str], port: int) -> bool:
+    """Only this window's own page may use the server: the Host header must name
+    the local address and port (so a web page cannot reach it through a DNS
+    rebinding trick), and a browser's Origin, when sent, must be that same
+    address (so another site cannot post a form to /run/ and start a command)."""
+    allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if (host or "").lower() not in allowed:
+        return False
+    return origin is None or origin.lower() in {f"http://{a}" for a in allowed}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "Xenosaga2GUI/1.0"
+
+    def _allowed(self) -> bool:
+        if request_allowed(self.headers.get("Host", ""), self.headers.get("Origin"), self.server.server_address[1]):
+            return True
+        self._send(403, "forbidden: this server only answers its own window")
+        return False
 
     def log_message(self, fmt, *args):  # noqa: N802
         return
@@ -1908,6 +2002,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(status, json.dumps(payload), "application/json")
 
     def do_GET(self):  # noqa: N802
+        if not self._allowed():
+            return
         url = urlparse(self.path)
         path = url.path
         if path in ("/", "/index.html"):
@@ -1940,6 +2036,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._send(404, "not found")
 
     def do_POST(self):  # noqa: N802
+        if not self._allowed():
+            return
         url = urlparse(self.path)
         length = int(self.headers.get("Content-Length", "0") or 0)
         body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
@@ -2225,15 +2323,72 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory() as td:
         f1 = Path(td) / "a.iso"
         f1.write_bytes(b"")
+        bundle = Path(td) / "Thing.workflow"
+        bundle.mkdir()
         ra, rd, rm = reveal_argv(str(f1)), reveal_argv(td), reveal_argv(str(Path(td) / "nope" / "x"))
-    check(ra is not None and rd is not None and rm is None and str(f1) in " ".join(ra)
-          and (sys.platform != "darwin" or ra[:2] == ["open", "-R"]),
-          "reveal: a file is shown in its folder (never opened), a missing path is refused")
+        rn, rb = reveal_argv(str(Path(td) / "nope")), reveal_argv(str(bundle))
+    check(ra is not None and rd is not None and rm is None and rn is None and str(f1) in " ".join(ra)
+          and (sys.platform != "darwin" or (ra[:2] == ["open", "-R"] and rb[:2] == ["open", "-R"]
+                                            and rd == ["open", td])),
+          "reveal: a file or a bundle-like folder is only shown (never opened), a missing path is refused "
+          "even when its folder exists")
+    check(request_allowed("127.0.0.1:8123", None, 8123) and request_allowed("localhost:8123", "http://localhost:8123", 8123)
+          and not request_allowed("127.0.0.1:8123", "https://example.com", 8123)
+          and not request_allowed("127.0.0.1:8123", "null", 8123)
+          and not request_allowed("evil.example:8123", None, 8123) and not request_allowed("", None, 8123),
+          "the server answers only its own page: another site's form post or a foreign Host is refused")
+    # disc-writing cards: --out is a disc file, never labelled a folder
+    iso_outs = [(c["name"], f["label"], f.get("pick")) for c in cmds if c["writes_iso"]
+                for f in c["fields"] if f["dest"] == "out"]
+    check(iso_outs and all(lab != "Output folder" and pick == "save" for _, lab, pick in iso_outs)
+          and fl("text-import", "out")["label"] == "Output disc",
+          "every card that writes a disc labels its --out as an output disc with Save as, not a folder ("
+          + ", ".join(n for n, _, _ in iso_outs) + ")")
+    # texture-import: the edited folder and the output disc are required, with their stated exceptions
+    ti = find_command("texture-import")
+    check(fl("texture-import", "tree")["required"] and fl("texture-import", "out")["required"],
+          "texture-import: Edited browse folder and Output disc are marked REQUIRED")
+    tiform = {"iso": ["a.iso"], "out": ["/o.iso"]}
+    try:
+        build_argv(ti, tiform)
+        check(False, "texture-import without an edited folder is refused")
+    except ValueError as exc:
+        check("Edited browse folder" in str(exc), "texture-import without an edited folder is refused: " + str(exc))
+    check(build_argv(ti, {"iso": ["a.iso"], "tree": ["/t"], "dry_run": ["on"]})[len(CLI_ARGV):]
+          == ["texture-import", "--iso", "a.iso", "--tree", "/t", "--dry-run"]
+          and build_argv(ti, {"iso": ["a.iso"], "verify_roundtrip": ["on"]})[len(CLI_ARGV):]
+          == ["texture-import", "--iso", "a.iso", "--verify-roundtrip"]
+          and "--textures" in build_argv(ti, {"iso": ["a.iso"], "out": ["/o.iso"], "textures": ["/p"]}),
+          "...but Dry run excuses the output disc, Self-check excuses both, a Pictures folder excuses the browse folder")
+    try:
+        build_argv(ti, {"iso": ["a.iso"], "tree": ["/t"]})
+        check(False, "texture-import without an output disc or Dry run is refused")
+    except ValueError as exc:
+        check("Output disc" in str(exc) and "Dry run" in str(exc),
+              "texture-import without an output disc or Dry run is refused, naming Dry run")
+    req_adv = sorted(f"{c['name']}.{f['dest']}" for c in cmds for f in c["fields"] if f["advanced"] and f["required"])
+    check(not req_adv, "no REQUIRED field is folded away under More settings"
+          + (f" ({', '.join(req_adv)})" if req_adv else ""))
+    vis = [f["dest"] for f in ti["fields"] if not f["advanced"]]
+    check(vis[:3] == ["iso", "out", "tree"] and len(vis) <= 6 and "verify_roundtrip" not in vis,
+          f"texture-import shows {len(vis)} fields up front; the rest are under More settings")
+    unknown_unless = sorted(f"{c['name']}.{f['dest']}" for c in cmds for f in c["fields"]
+                            for d in f.get("required_unless", ()) if d not in {g["dest"] for g in c["fields"]})
+    check(not unknown_unless, "every required_unless names a field of the same card"
+          + (f" ({', '.join(unknown_unless)})" if unknown_unless else ""))
+    try:
+        build_argv(find_command("model"), {"iso": ["a.iso\nb.iso"], "path": ["x"], "out": ["/o.glb"]})
+        check(False, "a line break in a one-value field is refused")
+    except ValueError as exc:
+        check("one line" in str(exc), "a line break in a one-value field is refused")
+    check(fl("lang-scan", "text")["prefill"] == "" and fl("lang-encode", "text")["prefill"] == "",
+          "the translated-text fields start empty, not at the untranslated export")
     deps = detect_deps()
     check("fonttools" in deps and "uharfbuzz" in deps, "the status panel reports fontTools and uharfbuzz")
     html = page()
     check("__XS1_CSS__" not in html and ".card-head" in html and "/schema" in html
-          and "How to use this window" in html and "never changed" in html, "page assembled")
+          and "How to use this window" in html and "never changed" in html and "More settings" in html
+          and "Loading the cards" in html and "textarea.one" in html, "page assembled")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 
