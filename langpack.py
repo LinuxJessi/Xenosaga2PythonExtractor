@@ -1751,10 +1751,10 @@ def self_test() -> int:
         tr = Path(td) / "tr"
         import shutil
         shutil.copytree(src, tr)
-        (tr / "chain1/movie/en/s0001.sub.txt").write_text(files["chain1/movie/en/s0001.sub.txt"].replace(
-            "Hello there", "\u05d0\u05d1 \u05d2"), encoding="utf-8")
-        (tr / "chain0/cf/en/sc0001.sbl.txt").write_text(files["chain0/cf/en/sc0001.sbl.txt"].replace(
-            "What is this?", "\u05d0\u05d1?"), encoding="utf-8")
+        (tr / "chain1/movie/en/s0001.sub.txt").write_bytes((files["chain1/movie/en/s0001.sub.txt"].replace(
+            "Hello there", "\u05d0\u05d1 \u05d2")).encode("utf-8"))
+        (tr / "chain0/cf/en/sc0001.sbl.txt").write_bytes((files["chain0/cf/en/sc0001.sbl.txt"].replace(
+            "What is this?", "\u05d0\u05d1?")).encode("utf-8"))
         r = run_tree([tr], enc(widths=parse_widths(0, [])))
         sub_old = files["chain1/movie/en/s0001.sub.txt"].split("\n")
         sub_new = r.files["chain1/movie/en/s0001.sub.txt"].decode("utf-8").split("\n")
@@ -1765,36 +1765,36 @@ def self_test() -> int:
         check("[Canaan]?" + B + A + "\n" in bank and "Line one\\nline two" in bank and "#sjis: x" in bank,
               "the bank's changed block is encoded, the rest of the file is as it was")
         # budgets and missing glyphs: nothing written, exit 1
-        (tr / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"].replace(
-            "Jin", "\u05d0\u05d1\u05d2\u05d3\u05d4"), encoding="utf-8")
+        (tr / "chain0/yamamoto/batdat.us.txt").write_bytes((files["chain0/yamamoto/batdat.us.txt"].replace(
+            "Jin", "\u05d0\u05d1\u05d2\u05d3\u05d4")).encode("utf-8"))
         r = run_tree([tr], enc())
         check(any("4 bytes" in x or "holds 4" in x for x in r.errors), "an over-budget battle string is refused")
-        (tr / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"], encoding="utf-8")
-        (tr / "exe/SLUS_208.92.exe.txt").write_text(files["exe/SLUS_208.92.exe.txt"].replace(
-            "Saving...", "\u05d0" * 16), encoding="utf-8")
+        (tr / "chain0/yamamoto/batdat.us.txt").write_bytes((files["chain0/yamamoto/batdat.us.txt"]).encode("utf-8"))
+        (tr / "exe/SLUS_208.92.exe.txt").write_bytes((files["exe/SLUS_208.92.exe.txt"].replace(
+            "Saving...", "\u05d0" * 16)).encode("utf-8"))
         r = run_tree([tr], enc())
         check(any("holds 15" in x for x in r.errors), "an over-budget executable string is refused")
-        (tr / "exe/SLUS_208.92.exe.txt").write_text(files["exe/SLUS_208.92.exe.txt"], encoding="utf-8")
+        (tr / "exe/SLUS_208.92.exe.txt").write_bytes((files["exe/SLUS_208.92.exe.txt"]).encode("utf-8"))
         # a section-first battle string: its first byte must be 20-7E or A1-FE
         g80 = GlyphSet("t")
         g80.bind(adr)
         g80.add(Glyph("u:\u05d0", box(2, 4)))
         g80.slots["u:\u05d0"] = {"tier": SINGLE, "cell": 0x81 + 0x80, "bytes": "81", "left": 2, "right": 4}
-        (tr / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"].replace(
-            "chaos", "\u05d0"), encoding="utf-8")
+        (tr / "chain0/yamamoto/batdat.us.txt").write_bytes((files["chain0/yamamoto/batdat.us.txt"].replace(
+            "chaos", "\u05d0")).encode("utf-8"))
         e80 = Encoder(cfg, g80, adr, f.metrics, shapers=[SimpleShaper()])
         r = run_tree([tr], e80)
         check(any("first string of a battle section" in x for x in r.errors),
               "a section's first battle string starting with byte 81 is refused")
-        (tr / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"], encoding="utf-8")
+        (tr / "chain0/yamamoto/batdat.us.txt").write_bytes((files["chain0/yamamoto/batdat.us.txt"]).encode("utf-8"))
         # the command: missing glyph -> exit 1 and nothing written
         gdir = Path(td) / "g"
         gdir.mkdir()
         gs.save(gdir / "glyphset.json")
         (gdir / "font0.us").write_bytes(f.to_bytes())
-        (gdir / LANGPACK).write_text(json.dumps({"format": 1, "configs": cfg}), encoding="utf-8")
-        (tr / "chain0/cf/en/sc0001.sbl.txt").write_text(files["chain0/cf/en/sc0001.sbl.txt"].replace(
-            "What is this?", "\u05d0\u05e9"), encoding="utf-8")       # ש has no glyph
+        (gdir / LANGPACK).write_bytes((json.dumps({"format": 1, "configs": cfg})).encode("utf-8"))
+        (tr / "chain0/cf/en/sc0001.sbl.txt").write_bytes((files["chain0/cf/en/sc0001.sbl.txt"].replace(
+            "What is this?", "\u05d0\u05e9")).encode("utf-8"))       # ש has no glyph
         import contextlib
         import io
         with contextlib.redirect_stderr(io.StringIO()) as err:
@@ -1802,8 +1802,8 @@ def self_test() -> int:
                        "--out", str(Path(td) / "enc")])
         check(rc == 1 and not (Path(td) / "enc").exists() and "no slot" in err.getvalue(),
               "a glyph with no slot: lang-encode writes nothing and exits 1")
-        (tr / "chain0/cf/en/sc0001.sbl.txt").write_text(files["chain0/cf/en/sc0001.sbl.txt"].replace(
-            "What is this?", "\u05d0\u05d1?"), encoding="utf-8")
+        (tr / "chain0/cf/en/sc0001.sbl.txt").write_bytes((files["chain0/cf/en/sc0001.sbl.txt"].replace(
+            "What is this?", "\u05d0\u05d1?")).encode("utf-8"))
         with contextlib.redirect_stdout(io.StringIO()):
             rc = main(["encode", "--text", str(tr), "--glyphset", str(gdir / "glyphset.json"),
                        "--out", str(Path(td) / "enc"), "--width-kind", "bank=300"])
@@ -1814,11 +1814,11 @@ def self_test() -> int:
         g2dir.mkdir()
         g2.save(g2dir / "glyphset.json")
         (g2dir / "font0.us").write_bytes(f.to_bytes())
-        (g2dir / LANGPACK).write_text(json.dumps({"format": 1, "configs": cfg}), encoding="utf-8")
+        (g2dir / LANGPACK).write_bytes((json.dumps({"format": 1, "configs": cfg})).encode("utf-8"))
         t2 = Path(td) / "t2"
         shutil.copytree(tr, t2)
-        (t2 / "chain0/cf/en/sc0001.sbl.txt").write_text(files["chain0/cf/en/sc0001.sbl.txt"].replace(
-            "What is this?", "\u05d0 \u00ab\u05d1\u00bb"), encoding="utf-8")
+        (t2 / "chain0/cf/en/sc0001.sbl.txt").write_bytes((files["chain0/cf/en/sc0001.sbl.txt"].replace(
+            "What is this?", "\u05d0 \u00ab\u05d1\u00bb")).encode("utf-8"))
         with contextlib.redirect_stderr(io.StringIO()) as err:
             rc = main(["encode", "--text", str(t2), "--glyphset", str(g2dir / "glyphset.json"),
                        "--out", str(Path(td) / "enc2"), "--width-kind", "bank=300"])
@@ -1835,8 +1835,8 @@ def self_test() -> int:
         # scan: the glyph a battle section's first string would start with is found
         bt = Path(td) / "bt"
         (bt / "chain0/yamamoto").mkdir(parents=True)
-        (bt / "chain0/yamamoto/batdat.us.txt").write_text(files["chain0/yamamoto/batdat.us.txt"].replace(
-            "chaos", "\u05d3\u05d4").replace("Jin", "\u05d5"), encoding="utf-8")
+        (bt / "chain0/yamamoto/batdat.us.txt").write_bytes((files["chain0/yamamoto/batdat.us.txt"].replace(
+            "chaos", "\u05d3\u05d4").replace("Jin", "\u05d5")).encode("utf-8"))
         ecol = Encoder(cfg, GlyphSet("c"), adr, f.metrics, collect=True, shapers=[SimpleShaper()])
         firsts: set = set()
         run_tree([bt], ecol, firsts)
