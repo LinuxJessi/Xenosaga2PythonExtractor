@@ -144,8 +144,11 @@ Give Disc 1 and Disc 2 of the same region; a mixed pair gets a warning.
 
 Prefer a window? `python gui.py` (or double-click `launch.command` on a Mac,
 `launch.bat` on Windows, `launch.sh` on Linux) opens a local page with a card
-per command; the cards are built from the CLI itself, so new commands appear
-on their own. `python build.py` makes a standalone app with PyInstaller
+per command, grouped by what you want to do: Start here (unpack, check,
+convert), look at one thing, change pictures, change text, fonts, new
+alphabets, and developer tools. Each card says in plain words what it needs
+and what it makes, and after a run where the output went. The cards are built
+from the CLI itself, so new commands appear on their own. `python build.py` makes a standalone app with PyInstaller
 (`packaging/`), and `.github/workflows/release.yml` builds release bundles.
 
 ## What you get

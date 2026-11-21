@@ -18,7 +18,7 @@ below was produced from them.
 ## Setup
 
 ```sh
-python -m pip install -r requirements.txt      # once: numpy
+python -m pip install -r requirements.txt      # once: numpy, fontTools, uharfbuzz
 python cli.py dump    --iso "Disc 1.iso" --iso "Disc 2.iso" --out out/ --code
 python cli.py verify  --out out/
 python cli.py browse  --out out/
@@ -383,8 +383,16 @@ python cli.py patch --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc10
 
 Prefer clicking to typing? `python gui.py`, or double-click `launch.command` on a
 Mac (`launch.bat` on Windows, `launch.sh` on Linux). It opens a local page with
-one card per command above. The cards are built from the command line itself, so
-new commands appear on their own.
+one card per command above, in sections by goal: **Start here** (1 Unpack the
+discs, 2 Check the unpacked files, 3 Convert to files you can open), then Look
+at one thing, Change pictures, Change text, Fonts and whole files, Translate
+into a new alphabet, and For developers. A closed card shows a plain title, a
+one-line summary and the command's name; an open one says what it needs and
+what it makes, and after a run where the output is, with a button that shows it
+in Finder or Explorer. Cards that edit the game write a new disc image and are
+marked "new disc copy"; the original is never changed. The cards are built from
+the command line itself, so new commands appear on their own (in an "Other
+commands" section until they get their own text).
 
 ## Also in the kit
 
