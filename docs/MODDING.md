@@ -124,6 +124,11 @@ with the reason when
   kanji outside level 1 and the 87 the executable lists), its cell is out of
   the draw call's reach, or its glyph cell is blank in font0 or font1.
 
+Letters the font does not have (Arabic, Devanagari, Georgian, Ethiopic,
+Cyrillic, ...) cannot be typed straight into the tree: `lang-scan` draws them
+into the fonts first and `lang-encode` writes them as escapes, ordered and
+wrapped. See [ALPHABETS.md](ALPHABETS.md).
+
 An explicit `⟦XX⟧` escape is never checked. Unchanged strings are never
 checked. The retail text itself passes: retyped through this check, none of
 the 587 non-ASCII USA strings and none of the 15,536 Japanese ones would be
@@ -243,6 +248,148 @@ Why these limits, and how sure they are:
 The files of the two whole-file kinds must come back exactly as you want
 them on the disc: line ends are kept as they are (LF in the subtitle files,
 CRLF in the quest files), and `⟦XX⟧` is a raw byte.
+
+## Executable strings: `exe-export` / `exe-import`
+
+```sh
+python cli.py exe-export --iso "Disc 1.iso" --out exe/
+python cli.py exe-import --iso "Disc 1.iso" --text exe/ --out modded.iso [--retail "Disc 1.iso"]
+```
+
+Most of Episode II's interface words are in the menus and the battle
+database, which `text-export` writes. A few displayed strings are still C
+literals in the game's code: `Saving...` (0x0068B678, drawn by the save
+screen `FUN_00237830` under `$init;$bg0;$zoom13;$han1;$prop1;...`),
+`No items to sell.` (0x0068D430), `Total Exp`, `Class Lv`, `Next Lv`,
+`Zone`, the disc-change prompts (`Please insert DISC 2 of` ...) and, in the
+title overlay, the memory-card prompts. `exe-export` lists them, and every
+other string the code points at, from the boot executable (`BOOT.exe.txt`,
+whatever its serial, so a Disc 1 tree also fits Disc 2, whose executable is
+the same file), `OV01.OVL` and `OV02.OVL`, beside a manifest
+`xs2-exe-export.json` with each file's sha256:
+
+```
+# exetext 1 file=SLUS_208.92 role=boot sha256=1f978e64...
+### @0x0068b678 max 15 bytes
+# refs 1 (hilo 0x0023799c)
+Saving...
+```
+
+The text is in the same form as the rest of the tree (the USA codec:
+Latin-1 letters, `⟦XX⟧` for any other byte). A line break in these strings
+is a real 0x0A byte, written `⟦0A⟧`; the title overlay's prompts also carry
+the control bytes `⟦19⟧⟦03⟧` and `⟦0C⟧` of the screen that draws them. Keep
+those.
+
+**What is listed.** A string the code points at: a 32-bit word in the data
+equal to its address, a `lui` followed by an `addiu`, `ori` or byte load with
+the same register (in the same block, or after a branch whose other path
+shares the `lui`), or an `addiu` from `$gp` (gp read from the executable's
+`.reginfo`, 0x006A2DF0; `Next Lv` and `Zone` sit in `.sdata`). It is at least
+two bytes of printable ASCII, tab, line feed or bytes from 0x80 up, with an
+ASCII letter or digit in it or reading as Japanese (developer strings, marked
+in a comment). Control bytes are allowed in a run with at least three ASCII
+letters. Bytes inside the font tables the kit reads from the executable are
+never listed. On the USA Disc 1 that is 3,441 strings in the boot ELF, 676
+in OV01 and 33 in OV02, most of them developer messages, file names and
+format strings: leave what you do not recognise alone. A few entries are data
+that happens to look like text; the export marks the ones that are visibly a
+pointer.
+
+Compared with the Ghidra listing of the boot ELF (1,106 referenced strings),
+all but 24 are found; those 24 are error messages (`cvFs... vtbl error`,
+`invalid motion_type`, `can not found parent scale`) whose `lui` is on another
+path of the code with the register reused in between, which this scan does
+not follow. Every string of the Ghidra listings of OV01 and OV02 is found.
+
+**The slot.** A string may use the bytes from its start up to the next
+non-zero byte, the next address the code forms or points at, or the start of
+a font table, whichever comes first, less one byte for the terminator. That
+is the `max N` of its header. `Saving...` has 7 zero bytes after it, so its
+slot is 15 bytes of text. The zero bytes after a string are taken to be
+padding; a variable that the code reached only through an address below it
+would not be seen.
+
+Two things can make `max` smaller than the padding, and both are named in a
+comment above the line. An address formed after a branch from a `lui` on
+another path ends the slot when it lands in the padding (on Disc 1,
+`cdrom0:\` at 0x0063F720 stops at 15 bytes because `FUN_001a5ff8` copies 80
+bytes from 0x0063F730, and `pfs1:/Your Saves` stops at 23 because 0x00645190
+is passed to a function). And when the code copies a string with a size it
+knows (an inlined `strcpy`: word and byte loads at fixed offsets up to the
+terminator), `max` is that size less the terminator, so the copy keeps it:
+`(Player)`, `sc0000.sb` and OV01's `$han1;$prop1;$zoom15,10;...` cannot grow
+past their retail length.
+
+**Bytes the code writes.** The scan also follows a register that holds a
+string's whole address (`lui` then `addiu`) and sees stores at a fixed offset
+from it. Some strings are templates the game fills in before it draws them:
+`Path No. 01 achievement level. ...` (0x003EC9A8) gets the path number in
+its bytes +9 and +10 (`FUN_0022e9e0`, read from code), `sc0000.sb` a scene
+number in +2..+5. Their blocks say "the code writes byte +9 ...", and an edit
+must keep the same bytes at those offsets (counting from +0), or the game
+writes the digits over the middle of the new text. Eight strings of the boot
+ELF are marked; none in the overlays.
+
+**Conversions.** Many of the strings are formats for a printf-style function
+that the code calls with a fixed set of arguments (`$han1;%s` at 0x0068D570
+goes to `FUN_002aa5d8` with one argument). An extra `%s` or a `%n` would make
+it use a garbage pointer. Import compares the `%`-conversions of an edit with
+the exported string by the kind of argument each reads and refuses any
+change: you may reword around them and change flags or widths, `%d` may
+become `%x` (both read a number), but nothing may be added, dropped or
+reordered; `%%` is a percent sign and reads nothing. Which strings really go
+to a formatter has not been traced, so every string is held to this, and the
+blocks with conversions list them in a comment. The game's `$` codes are not
+compared (as in `text-import`); keep them.
+
+**In place only.** `exe-import` writes each changed string over its own
+bytes and fills the rest of the slot with zeros. Nothing moves, no file
+changes size, and nothing but the edited strings changes: on Disc 1, two
+same-length edits changed 16 bytes of the 4.68 GB image, all inside
+`SLUS_208.92`, and its directory record stayed as it was. A string longer
+than its slot, a NUL, a changed header or a moved, missing or extra block
+is refused, naming the address and the slot, and so are changed conversions
+and moved stamped bytes; then nothing is written.
+Typed characters are checked against the fonts of the disc being patched, as
+in `text-import`; escapes are not checked.
+
+**One string, two files.** `OV01.OVL` and `OV02.OVL` load at the same
+address (0x00A80000), and the boot executable carries a third segment there
+whose bytes equal `OV02.OVL`'s: the title overlay as it is at boot. The
+strings of that segment are listed in `BOOT.exe.txt` and in
+`OV02.OVL.exe.txt`, each marked "the same string is in ..."; an edit must
+give both the same text, because which copy a given screen draws from has
+not been read. A reference from the boot executable's own code into that
+address range cannot say which overlay it means and is not counted.
+
+**Run it last.** After an import the boot executable is no longer the retail
+one, so `text-import`, `font-extract`, `recolor` with text and `lang-scan`
+refuse the image (they read their tables from the executable and check its
+sha256). So: `text-import` first, then `exe-import` on its output. For a
+second round on an image that already went through `exe-import`, pass the
+retail disc as `--retail`: the executables are taken from it, every edited
+string of the tree is applied to them, and the result replaces the ones on
+the image. That equals an import into a fresh retail copy (checked byte for
+byte on Disc 1). Without `--retail` such an image is refused, because its
+files are not the ones the tree was exported from. The tree may hold only
+the files it changes (the manifest plus, say, `BOOT.exe.txt`): a file it
+leaves out keeps the image's bytes, and with `--retail` it is reset to the
+retail bytes too, so an overlay patched in an earlier round does not stay
+behind and the twin check still compares against retail text (both cases
+are in the self-test). Only the USA build is supported; Japan and the demo
+are refused.
+
+**In a new alphabet.** The executable tree goes through `lang-scan` (as a
+second `--text`) and `lang-encode` like the text tree; give `lang-encode`
+the disc as `--iso` so it runs these checks as a dry run and tells the
+untouched strings from typed text ([ALPHABETS.md](ALPHABETS.md)).
+
+Seen in the running game: the edited `Saving...` string (boot executable
+0x68B678, in Amharic) on the LANGTEST disc in PCSX2, 2026-11-20
+([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)). That its
+print state sets `$han1` and `$prop1`, so it is drawn from the proportional
+font like dialogue, is read from code.
 
 ## Any file: `patch`
 

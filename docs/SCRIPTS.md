@@ -6,6 +6,10 @@ and every enemy group's battle thinking runs on it. This page is the
 machine, read from the game's own code, and how to read the kit's
 disassembly of it.
 
+(The Episode I kit's `SCRIPTS.md` is about writing systems: translating into
+Arabic, Hindi and other alphabets. In this kit that page is
+[ALPHABETS.md](ALPHABETS.md).)
+
 ```sh
 python cli.py sb --iso "Disc 1.iso" --path 'cf\sc1010.sb'     # one script, dialogue inline
 python cli.py browse --out OUT --kinds scripts                  # all 465, as OUT/browse/scripts/**/*.asm

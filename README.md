@@ -81,13 +81,14 @@ The full sets (music, sound banks, every cutscene voice line) come out of
 
 ## Running it
 
-Python 3.9 or newer, and numpy (the music renderer needs it). The app
-bundles carry numpy, the launchers install it into `.venv/` on first run if
-your Python lacks it, and from a terminal you install it once (first line
-below). ffmpeg (movies) is used when found; the app bundles carry it too.
+Python 3.9 or newer, with numpy (the music renderer), fontTools and
+uharfbuzz (drawing new alphabets into the font). The app bundles carry all
+three, the launchers install them into `.venv/` on first run if your Python
+lacks any, and from a terminal you install them once (first line below).
+ffmpeg (movies) is used when found; the app bundles carry it too.
 
 ```sh
-python -m pip install -r requirements.txt     # once: numpy
+python -m pip install -r requirements.txt     # once: numpy, fontTools, uharfbuzz
 python cli.py dump    --iso "Disc 1.iso" --iso "Disc 2.iso" --out out/ --code
 python cli.py verify  --out out/
 python cli.py browse  --out out/
@@ -108,10 +109,15 @@ python cli.py natives     --iso "Disc 1.iso" --iso "Disc 2.iso" --out natives/  
 python cli.py text-export --iso "Disc 1.iso" --out text/
 python cli.py dialogue    --iso "Disc 1.iso" --iso "Disc 2.iso" --out lines/ --voice   # every line, in play order, with voice clips
 python cli.py text-import --iso "Disc 1.iso" --text text/ --out modded.iso
+python cli.py exe-export  --iso "Disc 1.iso" --out exe/            # strings in the executables (Saving..., prompts)
+python cli.py exe-import  --iso modded.iso --text exe/ --out final.iso [--retail "Disc 1.iso"]   # in place; run last
 python cli.py font-extract --iso "Disc 1.iso" --out font/         # sheets as PNG, metrics, byte-to-cell table
 python cli.py font-rebuild --ref font/font0.us --sheets font/ --out new_font0.us
 python cli.py patch       --iso "Disc 1.iso" --out modded.iso --set 'chain0:cf\en\sc1010.sbl=new.sbl' [--grow]
 python cli.py recolor     --iso "Disc 1.iso" --out pink.iso          # KOS-MOS's hair, every copy
+python cli.py lang-scan   --iso "Disc 1.iso" --text tr/ --font F.ttf --script Arab --rtl --out fonts/   # new alphabets
+python cli.py lang-encode --text tr/ --glyphset fonts/glyphset.json --out tr-enc/ --width-kind bank=360
+python cli.py lang-preview --glyphset fonts/glyphset.json --text "..." --out line.png
 python cli.py self-test
 ```
 
@@ -182,6 +188,25 @@ reading every write back. Lines may grow or shrink inside the slot. A
 same-length edit changes exactly the edited bytes of the image (checked).
 Checked in PCSX2: a recoloured title menu, and subtitle files rewritten and
 relocated past the end of the image (docs/MODDING.md).
+
+**Another alphabet** (Arabic, Hindi, Georgian, Amharic, ...; USA discs):
+translate the exported tree as you would type it, then `lang-scan` shapes it
+with a TrueType font and draws the glyphs into both fonts, `lang-encode`
+writes the tree back with the glyphs as codes (right-to-left lines
+reordered, wrapped, every byte limit checked), and `patch` (the two fonts)
+plus `text-import` put it on a copy of each disc. The room is 246 codes, 181
+of them proportional. Seen in PCSX2 on a LANGTEST disc (Arabic in the field
+box, Hindi subtitles and cutscene lines, Amharic on the save screen; the
+field menu's party names failed, battle not reached):
+[docs/ALPHABETS.md](docs/ALPHABETS.md).
+
+The few displayed strings that live in the game's code (`Saving...`, the
+memory-card and disc-change prompts, `Total Exp`) go through `exe-export` /
+`exe-import`: each is rewritten in place, at most the `max N` bytes its
+header gives. Run `exe-import` last: afterwards the executable is no longer
+the retail one and the other text commands refuse the image; `--retail`
+redoes an image that was exe-patched before. In a new alphabet they go
+through `lang-scan` and `lang-encode` like the rest of the text.
 
 ## How it is built
 

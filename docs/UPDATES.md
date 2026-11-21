@@ -1,5 +1,110 @@
 # Updates
 
+## 2026-11-20 (evening): the language suite on one branch
+
+The alphabets (`lang-scan`, `lang-encode`, `lang-preview`), the executable
+strings (`exe-export`, `exe-import`) and the LANGTEST fixes merged on the
+`langsuite` branch; `cli.py self-test` and `gui.py --self-test` pass, and
+the five commands have GUI cards.
+
+* **Fixed:** with both merged, `lang-scan` refused an executable tree: the
+  typed-character check took untouched developer and data strings that
+  `exe-export` lists (`£`, `§`, `Ä`, `Ø`, a no-break space, read from
+  EUC-JP fullwidth letters and pointers) for typed text. An executable
+  string without the new script is now compared with the disc's own and
+  left out while it still holds its retail bytes (`lang-scan` always,
+  `lang-encode` with `--iso`). Self-test.
+* `lang-encode --iso` on an executable tree runs `exe-import`'s checks as
+  its dry run (it ran `text-import`'s, which need the text manifest).
+* The LANGTEST disc was built again from a fresh retail export with kit
+  commands only. Its strings, fonts and untouched text were checked on the
+  image, and it is byte-identical to the rebuild booted earlier the same day.
+  This build was not booted again
+  ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)).
+
+## 2026-11-20 (later): the LANGTEST disc, in PCSX2
+
+A copy of Disc 1 with Arabic, Hindi, Georgian and Amharic in the first
+minutes of a New Game, built with kit commands only and booted in PCSX2
+2.9.175. The worked example, captures and the build commands are in
+[ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc).
+
+* **Seen in game:** Hindi movie subtitles (`s010100`) and cfe cutscene lines
+  (`sc8001`), centred; Arabic in the field box (`sc1010` 0004-0006), joined,
+  right to left, not re-wrapped (on the first build one ligature, AD85 in
+  الشيء, was wider than its cell and cut off; the rebuild draws it whole);
+  Amharic as the save screen's title
+  (`MainMenu.txd` 0512) and in `Saving...` (an executable string). Lone bytes
+  0x80-0xFF in the movie and cfe lines (font0) and the field window
+  (font1), D9-E0 in the menu and executable strings, A4 pairs from A4A6 up
+  and AD cells draw.
+* **Failed:** the field menu's party names (`MainMenu.txd` 0000, 0003, 0012)
+  draw blank. A scratch build put the same Georgian codes in a field-window
+  line (drawn) and Hindi on codes the movie draws in a name (blank), so the
+  name boxes are at fault, not the codes. Why is not known.
+* **Not reached:** the battle HUD (`batdat.us`). Not tested: which face each
+  surface uses, `--tight`.
+* **Measured:** the field window wraps lines wider than 412 to 446 px and its
+  space is 5 px (`$xx1,4`, also read from the code). Use
+  `--width-kind bank=410 --space-px 5` for right-to-left field text.
+* **Fixed:** `lang-encode` counts a `<○>` button tag as wide as its symbol
+  (the window draws no brackets); `exe-import` accepts a tree that holds only
+  the executables it changes. Self-tests for both.
+* **Fixed after review:** `lang-scan` draws a glyph wider than its cell
+  narrower instead of cutting it off, and refuses one that would lose ink
+  above or below the cell (the Hindi scan now needs `--px 17.5`);
+  `lang-encode` writes `&NN` and `<○>` verbatim inside right-to-left lines
+  (`&12` came out as `21&`); `exe-import --retail` resets an executable the
+  tree leaves out to retail, so a second round equals a fresh import. Each
+  with a self-test. The disc was rebuilt with these and booted again.
+
+## 2026-11-20: new alphabets (`lang-scan`, `lang-encode`, `lang-preview`)
+
+Translations into scripts the USA font never had, ported from the Episode I
+kit (`glyphs.py`, `langpack.py`, each says so at the top) with the
+addressing rewritten for Episode II. [ALPHABETS.md](ALPHABETS.md).
+
+* **The room**, computed from the executable's reading of high bytes: 122
+  single-byte codes, 59 A4 pairs (both proportional) and 65 AD pairs (fixed
+  width), after reserving every cell the visible retail text uses (on the USA
+  discs only the lone byte FC). No kanji overflow as in Episode I.
+* **Both faces.** font1 is the face loaded at init (dialogue, menus,
+  battle); font0 is swapped in for movies and cfe cutscenes. Read from the
+  code; the old docstring "font0 is the dialogue face" was Episode I's.
+  Every glyph goes into both files, which stay identical in sheet 0.
+* **The encoder** works on the text-export tree, measures with the port of
+  the game's width function on the rebuilt font, re-emits colour and size
+  codes on right-to-left lines, handles several scripts in one project and
+  checks every byte limit (battle strings, executable strings, subtitles);
+  on any problem it writes nothing.
+* **fontTools and uharfbuzz are required** (requirements.txt), installed by
+  the launchers, checked by build.py and bundled by the app.
+* Checked on disc copies (Arabic and Hindi on Disc 1, the fonts and chain 0
+  on Disc 2), then in PCSX2 on the LANGTEST disc (next entry).
+
+## 2026-11-20: strings in the executables (`exe-export` / `exe-import`)
+
+* **`exetext.py`**, borrowed from the Episode I kit's `ovltext.py`: every
+  string the code of the boot executable, `OV01.OVL` and `OV02.OVL` points
+  at (pointer words, `lui` pairs, `$gp` addresses), as a block tree with each
+  string's slot (`### @0x0068b678 max 15 bytes` for `Saving...`). Written
+  back in place only, the rest of the slot zero-filled, nothing moved.
+* `exe-import` must be the last step: afterwards the executable is not the
+  retail one and `text-import`, `font-extract` and `lang-scan` refuse the
+  image. `--retail` starts again from the retail executables for a second
+  round.
+* The boot executable carries the title overlay's bytes as a third segment
+  (equal to `OV02.OVL`); strings there are listed in both trees and must be
+  edited alike.
+* `repack.patch_copy` takes `fs_replacements` (plain ISO files, same size).
+  Not yet seen in the running game. [MODDING.md](MODDING.md).
+* After review: an address formed from another path's `lui` now ends the slot
+  of the string before it (`cdrom0:\` 41 to 15, `pfs1:/Your Saves` 35 to
+  23); stores through a register holding a string's address are named, and an
+  edit must keep those bytes (`Path No. 01 ...` gets its number in +9..+10);
+  an inlined copy of known size caps `max` at the retail length; `%`
+  conversions must stay as exported (an added `%s` or `%n` is refused).
+
 ## 2026-11-10 (later): fixes from the translation review
 
 Four outside models reviewed the text work; every point and what was done is

@@ -2,9 +2,9 @@
 # Xenosaga II Extractor — macOS double-click launcher.
 # A `.command` file is auto-opened by Terminal when double-clicked in Finder.
 # Make it executable once if needed: `chmod +x launch.command`.
-# The kit needs numpy (requirements.txt). If the Python found here lacks it,
-# the first run makes a private environment in .venv/ beside this file and
-# installs numpy there; later runs use that environment.
+# The kit needs numpy, fontTools and uharfbuzz (requirements.txt). If the
+# Python found here lacks any of them, the first run makes a private environment
+# in .venv/ beside this file and installs them there; later runs use it.
 set -e
 cd "$(dirname "$0")"
 BASE=""
@@ -20,10 +20,11 @@ if [ -z "$PY" ]; then
     read -p "Press Enter to close..."
     exit 1
 fi
-if ! "$PY" -c "import numpy" >/dev/null 2>&1; then
-    echo "Setting up numpy (the music renderer needs it) in .venv/ ..."
-    if ! { "${BASE:-$PY}" -m venv .venv && .venv/bin/python -m pip install --quiet -r requirements.txt; }; then
-        echo "Could not install numpy automatically. Install it yourself with"
+if ! "$PY" -c "import numpy, fontTools, uharfbuzz" >/dev/null 2>&1; then
+    echo "Setting up numpy, fontTools and uharfbuzz (music and new alphabets) in .venv/ ..."
+    if ! { [ -x .venv/bin/python ] || "${BASE:-$PY}" -m venv .venv; } \
+            || ! .venv/bin/python -m pip install --quiet -r requirements.txt; then
+        echo "Could not install the requirements automatically. Install them yourself with"
         echo "    ${BASE:-python3} -m pip install -r requirements.txt"
         echo "then double-click this launcher again."
         read -p "Press Enter to close..."

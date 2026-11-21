@@ -285,8 +285,14 @@ def same_file(a, b) -> bool:
 
 
 def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
-               verbose: bool = True, grow: bool = False, relocate=(), _fail_after_copy=None) -> List[PatchReport]:
+               verbose: bool = True, grow: bool = False, relocate=(), _fail_after_copy=None,
+               fs_replacements: Dict[str, bytes] = None) -> List[PatchReport]:
     """Copy ``iso_path`` to ``out_iso`` with the replacements patched in.
+
+    ``fs_replacements`` maps plain ISO9660 file names (the boot ELF, ``OV01.OVL``)
+    to their new bytes, written with ``patch_fs_file`` after the TOC objects. Each
+    must be exactly the size of the file it replaces (``exetext.py`` writes in
+    place); anything else is refused before the copy is made.
 
     * The source is opened for reading only. ``out_iso`` may not be the source,
       by any name (a symlink or hard link to it is refused, RepackError).
@@ -305,9 +311,17 @@ def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
     if same_file(src, dst):
         raise RepackError(f"--out {dst} is the input image itself ({src.resolve()}); the kit never patches "
                           f"its source. Give another file name")
+    fs_replacements = dict(fs_replacements or {})
     iso = IsoImage(src)
     try:
         region.require_known(iso, "patching")
+        for name, data in fs_replacements.items():
+            f = iso.files.get(name)
+            if f is None or f.is_dir:
+                raise RepackError(f"{name}: no such file on {src}")
+            if len(data) != f.size:
+                raise RepackError(f"{name}: new size {len(data)} is not the file's size {f.size}; "
+                                  f"files are replaced in place only")
     finally:
         iso.close()
     if dst.is_dir():
@@ -323,7 +337,9 @@ def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
         shutil.copyfile(src, tmp)
         if _fail_after_copy is not None:            # self-tests: an error in the middle of the work
             _fail_after_copy(tmp)
-        reports = patch_iso(tmp, replacements, verbose=verbose, grow=grow, relocate=relocate)
+        reports = patch_iso(tmp, replacements, verbose=verbose, grow=grow, relocate=relocate) if replacements else []
+        for name, data in fs_replacements.items():
+            patch_fs_file(tmp, name, data, verbose=verbose)
         os.replace(tmp, dst)                         # replaces a link itself, never writes through it
     except BaseException:
         try:

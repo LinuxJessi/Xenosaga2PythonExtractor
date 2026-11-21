@@ -155,8 +155,26 @@ COMMAND_HELP = {
     "text-import": "Rebuild the banks you edited and patch them into a <em>copy</em> of the "
                    "disc. The whole import is refused if one bank no longer fits its slot; "
                    "every write is read back.",
+    "exe-export": "Write the strings the game's code points at (the boot executable, OV01.OVL and "
+                  "OV02.OVL: <em>Saving...</em>, the memory-card prompts, <em>Total Exp</em>) to an editable "
+                  "tree, one <code>### @ADDRESS max N bytes</code> block per string.",
+    "exe-import": "Write the edited strings back <em>in place</em> into a copy of the disc: each at most its "
+                  "<code>max N</code> bytes, the rest of its slot filled with zeros. Run it <em>last</em>: "
+                  "afterwards the executable is not the retail one and text-import, font-extract and lang-scan "
+                  "refuse the image. For another round, give the retail disc as <em>Retail disc</em>.",
     "patch": "Replace whole objects in a copy of the disc. One replacement per line: "
              "<code>chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl</code>.",
+    "lang-scan": "Translating into an alphabet the game never had (Arabic, Hindi, Georgian, ...): shape the "
+                 "translated text tree with a TrueType font, give every glyph a code the USA build can draw, and "
+                 "write <code>font0.us</code>, <code>font1.us</code>, <code>glyphset.json</code> and a preview "
+                 "sheet. Run it once per script; later scripts take <code>--extend</code> and the earlier fonts. "
+                 "See <code>docs/ALPHABETS.md</code>.",
+    "lang-encode": "Turn the translated tree into the same tree with the new glyphs written as codes, in the "
+                   "order the game draws them (right-to-left lines reordered), wrapped and checked against every "
+                   "byte limit. Nothing is written if a glyph or a limit is missing. Then patch the two fonts into "
+                   "a copy and run <code>text-import</code> on it.",
+    "lang-preview": "Draw one line with the rebuilt font to a PNG, the way the game's print function places "
+                    "the cells, to check a translation without the game.",
     "self-test": "Run every module's built-in checks (no disc needed).",
 }
 
@@ -165,11 +183,20 @@ FIELD_HINTS = {
     "iso": {"label": "Disc image", "pick": "file", "filter": "iso"},
     "out": {"label": "Output", "pick": "dir"},
     "text": {"label": "Text folder", "pick": "dir"},
+    "retail": {"label": "Retail disc", "pick": "file", "filter": "iso"},
     "dump": {"label": "Dump folder", "pick": "dir"},
     "path": {"label": "In-game path", "placeholder": "e.g. cf\\sc1010.sb"},
     "set": {"label": "Replacements", "placeholder": "chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl"},
     "glob": {"label": "Only paths", "placeholder": "e.g. model\\char\\pc\\* (optional)"},
     "limit": {"label": "At most", "placeholder": "N objects per kind (optional, for a quick sample)"},
+    "font": {"label": "TrueType font", "pick": "file"},
+    "glyphset": {"label": "glyphset.json", "pick": "file"},
+    "cells": {"label": "Cell sheet (PNG)", "pick": "file"},
+    "keys": {"label": "Cell keys (text)", "pick": "file"},
+    "font0": {"label": "Earlier font0.us", "pick": "file"},
+    "font1": {"label": "Earlier font1.us", "pick": "file"},
+    "extend": {"label": "Earlier glyphset.json", "pick": "file"},
+    "line": {"label": "Line of text", "placeholder": "the line as you would write it in the tree"},
     "chain": {"label": "Chain", "choices": [["", "All chains"], ["0", "Chain 0 (shared data)"],
                                             ["1", "Chain 1 (Disc 1 movies and voices)"],
                                             ["2", "Chain 2 (Disc 2 movies and voices)"]]},
@@ -202,7 +229,7 @@ def command_schema(parser: Optional[argparse.ArgumentParser] = None) -> List[dic
     by_signature: Dict[tuple, dict] = {}
     for name, p in sub.choices.items():
         short = _help_of(sub, name)
-        writes_iso = bool(_WRITES_ISO.search(short)) or name in ("patch", "text-import")
+        writes_iso = bool(_WRITES_ISO.search(short)) or name in ("patch", "text-import", "exe-import")
         fields = []
         for a in p._actions:
             if isinstance(a, argparse._HelpAction):
@@ -243,6 +270,10 @@ def command_schema(parser: Optional[argparse.ArgumentParser] = None) -> List[dic
                 pick = "save"
                 f["label"] = "Output disc"
                 f["suggest"] = "modded.iso"
+            elif a.dest == "out" and re.search(r"\bPNG to write\b", a.help or ""):
+                pick = "save"
+                f["label"] = "Output PNG"
+                f["suggest"] = "line.png"
             if pick:
                 f["pick"] = pick
                 if hint.get("filter"):
@@ -531,12 +562,26 @@ def _numpy_version() -> str:
     return getattr(numpy, "__version__", "installed")
 
 
+def _module_version(name: str) -> str:
+    """A required module's version, or "" when it is missing (fontTools and
+    uharfbuzz draw new alphabets; the app bundles carry them)."""
+    if FROZEN:
+        return "bundled"
+    try:
+        mod = __import__(name)
+    except ImportError:
+        return ""
+    return str(getattr(mod, "__version__", None) or getattr(mod, "version", None) or "installed")
+
+
 def detect_deps() -> dict:
     return {
         "python": sys.version.split()[0],
         "cli": str(CLI_TARGET) if CLI_TARGET.exists() else "",
         "ffmpeg": _tool("ffmpeg") or "",
         "numpy": _numpy_version(),
+        "fonttools": _module_version("fontTools"),
+        "uharfbuzz": _module_version("uharfbuzz"),
     }
 
 
@@ -912,6 +957,8 @@ async function loadStatus() {
     ['Discs found', (d.discs || []).length ? d.discs.map(p => p.split('/').pop()).join(' + ') : 'none (use Browse)', (d.discs || []).length > 0],
     ['ffmpeg (movies)', d.deps.ffmpeg || 'not found: movies are skipped', !!d.deps.ffmpeg],
     ['numpy (music WAV)', d.deps.numpy || 'MISSING: python -m pip install -r requirements.txt', !!d.deps.numpy],
+    ['fontTools (new alphabets)', d.deps.fonttools || 'MISSING: python -m pip install -r requirements.txt', !!d.deps.fonttools],
+    ['uharfbuzz (new alphabets)', d.deps.uharfbuzz || 'MISSING: python -m pip install -r requirements.txt', !!d.deps.uharfbuzz],
   ];
   box.innerHTML = rows.map(([k, v, ok]) =>
     `<div class="row"><span>${k}</span><span class="v ${ok ? 'ok' : 'bad'}" title="${escapeHtml(String(v))}">${escapeHtml(String(v))}</span></div>`).join('');
@@ -1140,6 +1187,20 @@ def self_test() -> int:
           == ["/x/Xenosaga Episode II - Jenseits von Gut und Bose (USA) (Disc 1).iso",
               "/x/Xenosaga Episode II - Jenseits von Gut und Bose (USA) (Disc 2).iso"],
           "disc detection: Disc 1 then Disc 2, copies and other episodes skipped")
+    scan = find_command("lang-scan")
+    fl = {f["dest"]: f for f in scan["fields"]}
+    check(fl["font"].get("pick") == "file" and fl["text"]["kind"] == "multi" and fl["iso"].get("pick") == "file"
+          and find_command("lang-encode") and find_command("lang-preview"),
+          "lang-scan / lang-encode / lang-preview have cards; the TrueType font is a file picker")
+    prev = {f["dest"]: f for f in find_command("lang-preview")["fields"]}
+    argv = build_argv(find_command("lang-preview"), {"glyphset": ["/g/glyphset.json"], "line": ["abc"],
+                                                     "out": ["/o.png"]})[len(CLI_ARGV):]
+    check(prev["out"].get("pick") == "save", "lang-preview's --out is a PNG file to save, not a folder")
+    check(prev["line"].get("pick") is None and argv[:5] == ["lang-preview", "--glyphset", "/g/glyphset.json",
+                                                            "--text", "abc"],
+          "lang-preview's line of text is a text field passed as --text")
+    deps = detect_deps()
+    check("fonttools" in deps and "uharfbuzz" in deps, "the status panel reports fontTools and uharfbuzz")
     html = page()
     check("__XS1_CSS__" not in html and ".card-head" in html and "/schema" in html, "page assembled")
     print("self-test", "passed" if ok else "FAILED")

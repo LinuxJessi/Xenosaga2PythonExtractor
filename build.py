@@ -61,12 +61,14 @@ def main() -> int:
         sys.exit("PyInstaller is not installed in this Python.\n"
                  "  python -m pip install pyinstaller\n"
                  "then re-run:  python build.py")
-    try:
-        import numpy  # noqa: F401  (the music renderer; requirements.txt)
-    except ImportError:
-        sys.exit("numpy is not installed in this Python, and the bundle must carry it.\n"
-                 "  python -m pip install -r requirements.txt\n"
-                 "then re-run:  python build.py")
+    for mod, why in (("numpy", "the music renderer"), ("fontTools", "new alphabets: glyph outlines"),
+                     ("uharfbuzz", "new alphabets: shaping")):
+        try:
+            __import__(mod)
+        except ImportError:
+            sys.exit(f"{mod} ({why}) is not installed in this Python, and the bundle must carry it.\n"
+                     "  python -m pip install -r requirements.txt\n"
+                     "then re-run:  python build.py")
     if not SPEC.exists():
         sys.exit(f"spec not found: {SPEC}")
 

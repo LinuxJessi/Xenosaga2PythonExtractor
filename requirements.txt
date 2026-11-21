@@ -2,12 +2,14 @@
 #
 #   python -m pip install -r requirements.txt
 #
-# The app bundles carry numpy, and the launchers (launch.command, launch.bat,
-# launch.sh) install it into .venv/ on first run when the Python they find
-# lacks it. Everything else (disc reading, TOC, ARX, textures, text, scripts,
-# KORG sound banks, SoundFonts, write-back) is the Python standard library,
-# 3.9 or newer.
+# All three are required. The app bundles carry them, and the launchers
+# (launch.command, launch.bat, launch.sh) install them into .venv/ on first run
+# when the Python they find lacks any of them. Everything else (disc reading,
+# TOC, ARX, textures, text, scripts, KORG sound banks, SoundFonts, write-back)
+# is the Python standard library, 3.9 or newer.
 numpy>=1.21        # the music renderer, spu2synth.py (tested with numpy 2.0)
+fonttools>=4.40    # new alphabets: glyph outlines (glyphs.py; tested with 4.60.2)
+uharfbuzz>=0.37    # new alphabets: HarfBuzz shaping (glyphs.py, langpack.py; tested with 0.51.7)
 #
 # Optional program, found on PATH or bundled under tools/ (see packaging/):
 #   ffmpeg      movies (.sfd/.ipu) to MP4, .adx voices to WAV

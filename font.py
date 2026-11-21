@@ -9,7 +9,16 @@ addressing is kept only inside the ``Episode1`` class, and the old module-level
 names (``cell_of_code``, ``prop_index``, ``ASCII2EUC``, ...) raise ``FontError``
 so they cannot be applied to an Episode II font by accident.
 
-File layout (font0 is the dialogue face, font1 the menu face)::
+Which face draws what (read from the USA code, 2026-11-20; the Episode I kit's
+"font0 is the dialogue face" does not hold here): the engine has ONE font
+buffer (0x8DD280). ``FUN_00198ff0`` loads font1 at init, so font1 draws field
+dialogue, menus and battle text; font0 is loaded in its place while a movie
+plays (``FUN_001e7d08``) and between cfe.init (``FUN_0024c308``) and
+cfe.destroy (``FUN_0024e738``), the real-time cutscenes. On the USA discs
+cells 0-1023 (sheet 0) and all 384 metric pairs are byte-identical in the two
+files (measured), so a new glyph is written into both.
+
+File layout::
 
     0x00000  0x20-byte header
     0x00020  block 0  0x3C000 bytes   -> glyph sheets 0 and 1
