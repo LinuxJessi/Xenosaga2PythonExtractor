@@ -83,8 +83,9 @@ position, a control code is followed by its parameters (``CTRL_PARAMS``),
 which may be zero. The save prompts start ``0B 0E 01 01 00 00 00 0D 03 19
 03``, so a NUL-split scan saw only their first four bytes. Such a run is
 taken when it parses to a terminator, has no address-carrying code (0x16,
-0x17) and has three ASCII letters or reads as EUC-JP Japanese (the HDD
-installer prompts). The tree writes every code and its parameters as
+0x17) and has three ASCII letters or reads as EUC-JP Japanese with at least
+three kana or kanji (the HDD installer prompts; the field-debug label
+``0D 02`` + ``ハシゴ`` at 0x006899D0). The tree writes every code and its parameters as
 escapes (``show``); import re-reads an edit with the same grammar
 (``print_check``).
 
@@ -136,7 +137,7 @@ the one the tree was exported from (manifest sha256). ``--retail`` takes the
 base bytes from a retail disc instead and applies every edited string of the
 tree to them, so an image that is already exe-patched can be done again.
 After an import the boot ELF is no longer the retail one, so every command
-that reads its tables (text-import, font-extract, lang-scan) refuses the
+that reads its tables (text-import, font-extract) refuses the
 image: exe-import is the last step.
 
     python exetext.py export DISC.iso OUTDIR
@@ -635,8 +636,10 @@ def _print_text_ok(raw: bytes, toks: List[Tuple[str, int, int]]) -> bool:
             if 0x80 <= b <= 0x9F or b == 0x7F:
                 return False
             letters += 0x41 <= (b | 0x20) - 0x20 <= 0x5A if b < 0x80 else 0
-    # Japanese between the codes (the HDD installer's EUC-JP prompts in OV02) counts as text too
-    return ctl and (letters >= 3 or _euc_japanese(bytes(chars)))
+    # Japanese between the codes (the HDD installer's EUC-JP prompts in OV02) counts as text too; with
+    # a control code in front, three kana are enough (the field-debug label 0D 02 'ハシゴ' at 0x006899D0,
+    # printed by FUN_00195760; on the retail executables this adds that run and nothing else)
+    return ctl and (letters >= 3 or _euc_japanese(bytes(chars), min_kana=3))
 
 
 def _print_chars(raw: bytes) -> bytes:
@@ -649,9 +652,10 @@ def _print_chars(raw: bytes) -> bytes:
     return b"".join(raw[a:z] for k, a, z in toks if k == "char" and raw[a] >= 0x20)
 
 
-def _euc_japanese(raw: bytes) -> bool:
-    """The bytes read as EUC-JP, at least four characters, nearly all of them full-width kana,
-    kanji or full-width signs and letters (not half-width katakana, which a binary table's 0xA1-0xDF bytes read as in Shift-JIS)."""
+def _euc_japanese(raw: bytes, min_kana: int = 4) -> bool:
+    """The bytes read as EUC-JP, at least ``min_kana`` kana or kanji, nearly all of the characters
+    full-width kana, kanji or full-width signs and letters (not half-width katakana, which a binary
+    table's 0xA1-0xDF bytes read as in Shift-JIS)."""
     try:
         t = raw.decode("euc_jp")
     except UnicodeDecodeError:
@@ -659,7 +663,7 @@ def _euc_japanese(raw: bytes) -> bool:
     kana = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF for c in t)
     wide = sum(0x3000 <= ord(c) <= 0x303F or 0xFF01 <= ord(c) <= 0xFF5E or c in "\u2015\u2018\u2019\u201c\u201d"
                for c in t)
-    return kana >= 4 and 3 * (kana + wide) >= 2 * len(t.replace(" ", "").replace("\n", ""))
+    return kana >= min_kana and 3 * (kana + wide) >= 2 * len(t.replace(" ", "").replace("\n", ""))
 
 
 def _print_string(data: bytes, off: int, end: int) -> Optional[bytes]:
@@ -1348,8 +1352,8 @@ def plan(iso_path, tree, retail_iso=None) -> Tuple[Dict[str, bytes], List[str]]:
     return changes, problems
 
 
-ORDER_WARNING = ("WARNING: the executable on {out} is no longer the retail one, so text-import, font-extract, "
-                 "recolor with text and lang-scan will refuse this image. Run exe-import last; for another round, "
+ORDER_WARNING = ("WARNING: the executable on {out} is no longer the retail one, so text-import and font-extract "
+                 "will refuse this image. Run exe-import last; for another round, "
                  "import into the image again with --retail RETAIL.iso (the retail disc), which starts from the "
                  "retail bytes and applies the whole tree")
 
@@ -1581,6 +1585,10 @@ def self_test() -> int:
     check("NUL" in (print_check(b"ab\0cd") or ""), "a NUL in a character position is refused")
     check(print_check(b"$zoom12;ab") is None and "';'" in (print_check(b"ab$zoom12") or ""),
           "an unclosed $code is refused, a closed one accepted")
+    ladder = b"\x0d\x02\xa5\xcf\xa5\xb7\xa5\xb4"                 # SLUS_208.92 0x006899D0, the field-debug label
+    check(_print_string(ladder + b"\0", 0, 9) == ladder and _print_string(b"\x0d\x02\xa5\xcf\xa5\xb7\0", 0, 7) is None
+          and not _textlike(ladder), "a control code followed by three EUC kana is text by the print grammar (the "
+                                     "ladder label, which the plain-text rule refuses); two kana are not")
     codec = textcodec.UsCodec()
     for raw in (SAVE_PROMPT, SKIP_PROMPT, HIST_PROMPT, b"#\x19\x03x", b"\xa4\xa6\x0c\x20\x20\x20\xe9"):
         check(codec.from_text(show(codec, raw)) == raw, f"show() is exact for {raw[:12]!r}...")

@@ -64,9 +64,11 @@ class Row:
 # what each textpack kind is, for the report
 KIND_ROWS = {
     "bank": ("dialogue and scene text (USA: one bank per scene or map)", "cf\\en\\*.sbl, model\\map\\en\\*.sbl, ...",
-             "editable", "grows inside the room its loader has; --grow relocates within it (bank_budget)"),
+             "editable", "grows inside the room its loader has; --grow relocates within it (bank_budget). The USA "
+                         "build reads its banks and subtitles from en\\ only: the language byte (DAT_0063f87a) is also "
+                         "the Subtitles switch, and both of its values, 0 and 2, pick 'en' in FUN_001948e8's table"),
     "inline": ("dialogue inside scripts (Japan, demo)", "cf\\*.sb, model\\map\\*.bin, ...", "in place", ""),
-    "menu": ("menus, item/skill/location names, help text, database", "yosikawa\\*.txd", "editable",
+    "menu": ("menus, item/skill/location names, help text, database, the Skill Tutorial", "yosikawa\\*.txd", "editable",
              "within the file's sectors (the loader's static buffers)"),
     "battle": ("battle names and descriptions: party, enemies, skills, items, equipment, messages",
                "yamamoto\\batdat.us", "editable",
@@ -139,7 +141,9 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
      "(E2_ELS04 'SEARCH IN PROGRESS / STANDBY / Locked / Unlocked', 'THIS ELEVATOR CANNOT BE USED NOW'), and 12 "
      "entries whose names end in _us where the Japanese build has the same entry without the suffix, most with "
      "another picture (redrawn for the USA build); the named entries are listed with "
-     "--tex-words and docs/MODDING.md. OCR misses small, stylised and Japanese text, so this is a lower bound. "
+     "--tex-words and docs/MODDING.md. OCR misses small, stylised and Japanese text, so this is a lower bound. A "
+     "survey of entry names (moji, kanban, poster, sign, text, menu, ...) lists 1,302 such entries in 238 files, "
+     "embedded blocks included; a name is a hint, not proof of words. "
      "texture-import (another branch, not merged) writes txy"),
     ("video", "staff roll", ("movie\\epstaff.sfd",), "export only",
      "the credits are drawn into the video (frames looked at, 2026-11-20); movie\\en\\EPSTAFF.txt is its dialogue "
@@ -200,6 +204,19 @@ TEX_WORDS: List[Tuple[str, Optional[int], str, str]] = [
     ("model\\map\\E2_MID01.txy", None, "m01_con0000_us", "no words (USA; the Japanese m01_con0000 has a label)"),
     ("model\\map\\E2_MID01.txy", None, "m01_con0000_1_us", "no words (USA)"),
     ("model\\map\\E2_MID02.txy", None, "m01_con0000_us", "no words (USA)"),
+    ("model\\map\\E2_MIL12.txy", None, "warning", "WARNING"),
+    ("model\\map\\E2_KUK11.txy", None, "kanbanmoji", "Reel Dude's Fishing Lab. (shop sign)"),
+    ("model\\map\\E2_KUK02.txy", None, "yado_kanban01", "OUR TREASURE / INN.SHOP (sign)"),
+    ("model\\map\\E2_KUK05.txy", None, "kanban01", "IRONMAN (poster)"),
+    ("model\\map\\E2_ELS05.txy", None, "font0001", "MENU, with a line of small print"),
+    ("model\\map\\CFEVE04.txy", None, "koukoku_moji02", "SECOND MILTIA SPACE PORT"),
+    ("model\\map\\CFEVE03.txy", None, "text", "five lines of blocky English words, partly legible (WE ... THE ONE)"),
+    ("model\\map\\E2_MIL02.txy", None, "poster07", "SECOND MILTIA AEROSPACE INDUSTRY"),
+    ("model\\map\\E2_MOM11.txy", None, "toilet_poster", "SURPRISE & DISCOVERY!! Dogs love GRACE ONE!! / GRACEFUL DOG "
+                                                       "FOOD (poster)"),
+    ("model\\map\\E2_MOM11.txy", None, "kanban", "NEW TASTY FLAVOR / VIRGINIAN BRIGHT / refresh yourself!! (sign)"),
+    ("model\\map\\E2_DYU03.txy", None, "keijiban4", "DURANDAL, with columns of small print (notice board)"),
+    ("model\\map\\E2_MIL04.txy", None, "nagare_moji03", "INFORMATION SERVICE COUNTER"),
 ]
 
 
@@ -279,7 +296,12 @@ GRAMMAR_FACTS = [
     ("boot", 0x006885E0, 0x00688643, b"\x0b\x0e\x01\x01\x00\x00\x00\x0d\x03\x19\x03Contin"),
     ("OV02.OVL", 0x00A83348, 0x00A8338D, b"\n\n\x19\x03Start game?"),
     ("OV02.OVL", 0x00A83390, 0x00A83433, b"\x19\x03Please insert"),
+    ("boot", 0x006899D0, 0x006899D8, b"\x0d\x02\xa5\xcf\xa5\xb7\xa5\xb4"),       # field-debug label, 3 kana
 ]
+
+# strings the USA scripts pass to natives that draw them, counted on the retail discs (both discs: all in chain
+# 0): native -> (calls, distinct strings, banks). ``--verify`` recounts them with dialogue.native_calls.
+NATIVE_FACTS = {"bat.namePut": (1363, 416, 113), "samp.fontPut": (28, 3, 17)}
 
 
 def _toc_paths(iso: IsoImage) -> List[Tuple[int, str]]:
@@ -291,12 +313,16 @@ def _toc_paths(iso: IsoImage) -> List[Tuple[int, str]]:
 
 
 def _text_rows(isos: List[IsoImage]) -> List[Row]:
+    import sbl
     import textpack
     seen: Dict[Tuple[int, str], str] = {}
     builds = set()
     files: Dict[str, int] = {}
     strings: Dict[str, int] = {}
     compressed: Dict[str, int] = {}
+    slots = tutorial = 0
+    hints: Dict[str, int] = {}
+    hint_files = set()
     for iso in isos:
         ctx = textpack.Context(iso)
         builds.add(ctx.build)
@@ -313,6 +339,19 @@ def _text_rows(isos: List[IsoImage]) -> List[Row]:
                 continue
             files[kind.name] = files.get(kind.name, 0) + 1
             strings[kind.name] = strings.get(kind.name, 0) + n
+            if ctx.build == "us" and kind.name in ("bank", "menu"):
+                strs = sbl.parse(data) if kind.name == "bank" else textpack.txd_parse(data)[0]
+                for s in strs:
+                    h = textpack._jp_hint(s)
+                    if h:
+                        hints[h[1:h.index(":")]] = hints.get(h[1:h.index(":")], 0) + 1
+                        hint_files.add(e.path)
+                if kind.name == "menu":
+                    low = e.path.lower()
+                    if low == textpack.SLOT_MENU:
+                        slots += sum(bool(textpack.slot_markers(s)) for s in strs)
+                    elif low == textpack.TUTORIAL:
+                        tutorial += sum(textpack.tutorial_role(s) != "text" for s in strs)
             if e.compressed:
                 compressed[kind.name] = compressed.get(kind.name, 0) + 1
     rows = []
@@ -325,7 +364,47 @@ def _text_rows(isos: List[IsoImage]) -> List[Row]:
         n = f"{files[k.name]} file(s)" + (f", {strings[k.name]} string(s)" if strings.get(k.name) else "")
         if compressed.get(k.name):
             note = (note + "; " if note else "") + f"{compressed[k.name]} stored compressed: import refuses those"
+        if k.name == "menu" and (slots or tutorial):
+            note += (f". Guarded: {slots} MainMenu strings hold the memory-card slot placeholder that FUN_00238038 "
+                     f"overwrites (an edit must keep it, findable by the game's walk); {tutorial} Tutorial.txd entries "
+                     f"are commands FUN_00215f10 runs (refused if changed)")
         rows.append(Row("text", what, where, "text-export / text-import", n, status, note))
+    if hints:
+        rows.append(Row("other", "Japanese developer text left in the USA files (test lines such as "
+                                 "'11テストメッセージ', notes in MainMenu.txd)",
+                        f"{len(hint_files)} bank and menu files", "text-export / text-import",
+                        ", ".join(f"{v} {k.upper()} string(s)" for k, v in sorted(hints.items())), "editable",
+                        "exported with a #sjis: or #euc: reading line above the block; whether a player can reach any "
+                        "of them is not verified (the test lines sit behind talk.check results 11 and 12 of a template "
+                        "routine); probably debug"))
+    return rows
+
+
+def native_counts(iso_paths: List[str]) -> Dict[str, Tuple[int, int, int]]:
+    """native -> (calls, distinct strings, banks) for the natives of NATIVE_FACTS, from the scripts."""
+    import dialogue
+    uses = dialogue.native_text_uses(dialogue.Disc(iso_paths), NATIVE_FACTS)
+    return {n: (len(v), len({s for *_, s in v}), len({(c, p.lower()) for c, p, _, _ in v})) for n, v in uses.items()}
+
+
+def _native_rows(counts: Dict[str, Tuple[int, int, int]]) -> List[Row]:
+    rows = []
+    calls, distinct, banks = counts.get("bat.namePut", (0, 0, 0))
+    if calls:
+        rows.append(Row("text", "battle banners: the enemy skill and action names a battle shows (bat.namePut)",
+                        "inside the bank files (model\\map\\en\\*.sbl)", "text-export / text-import (bank files)",
+                        f"{calls} call(s), {distinct} distinct string(s) in {banks} bank(s)", "editable",
+                        "marked '# battle banner' in the export; a name has a copy in each bank that uses it: "
+                        "text-import notes copies edited unalike, refuses a banner that ends with a one-byte letter "
+                        "from 0x80 up (FUN_002353b8 would step over the terminator) and notes one wider than any "
+                        "banner of the disc (FUN_002355d8 sizes the box with no limit). The dialogue command lists them "
+                        "as 'banner'"))
+    calls, distinct, banks = counts.get("samp.fontPut", (0, 0, 0))
+    if calls:
+        rows.append(Row("other", "digit strings drawn by samp.fontPut ('100', '802', '102')",
+                        "inside the bank files (cf\\en\\*.sbl)", "text-export / text-import (bank files)",
+                        f"{calls} call(s), {distinct} distinct string(s) in {banks} bank(s)", "editable",
+                        "probably a debug or template routine (not verified in the game)"))
     return rows
 
 
@@ -402,6 +481,8 @@ def report(iso_paths: List[str], verify: bool = False, done: Optional[List[str]]
     problems: List[str] = []
     try:
         rows = _text_rows(isos)
+        counts = native_counts(iso_paths)
+        rows += _native_rows(counts)
         exe_rows, es = _exe_rows(isos[0])
         rows += exe_rows
         paths: List[Tuple[int, str]] = []
@@ -413,7 +494,10 @@ def report(iso_paths: List[str], verify: bool = False, done: Optional[List[str]]
             read = _reader(iso_paths[0])
             problems += [f"texture words: {b}" for b in tex_word_problems(read)]
             problems += [f"battle database: {b}" for b in batdat_probe(read("yamamoto\\batdat.us"))]
+            problems += [f"script text: {n} counts {counts.get(n)}, the retail discs {want}"
+                         for n, want in NATIVE_FACTS.items() if counts.get(n) != want]
             done += ["the control-code prompts are listed with their exact ends",
+                     "the battle banners and fontPut strings are counted as on the retail discs",
                      "the texture entries with words are where the list says",
                      "the battle database's strings grow on this disc's file"]
     finally:
@@ -527,7 +611,16 @@ def self_test() -> int:
     title = "ＸｅｎｏｓａｇａＥＰＩＩ−００［００：００］".encode("shift_jis")
     struct.pack_into("<H", icon_sys, textpack.ICON_BREAK_AT, 30)
     icon_sys[textpack.ICON_TITLE_AT:textpack.ICON_TITLE_AT + len(title)] = title
+    import sb
+
+    def op(o, v=None):
+        return struct.pack("<H", o) if v is None else struct.pack("<HHH", o, v & 0xFFFF, (v >> 16) & 0xFFFF)
+    # a scene script: bat.namePut(1, 2, 3, line 1, 5) twice, samp.fontPut(line 0) once
+    put = (op(0x04, 1) + op(0x28) + op(0x04, 2) + op(0x28) + op(0x04, 3) + op(0x28) + op(0x06, 0x200001) + op(0x2A)
+           + op(0x04, 5) + op(0x28) + op(0x04, 5) + op(0x15, 0) + op(0x19))
+    code = put + put + op(0x06, 0x200000) + op(0x2A) + op(0x04, 1) + op(0x15, 1) + op(0x19) + op(0x13)
     files = {"font0.us": font, "font1.us": font,
+             "cf\\sc0001.sb": sb.build_script(code, [("bat", "namePut"), ("samp", "fontPut")]),
              "cf\\en\\sc0001.sbl": sbl.build([b"[A]Hello.", b"Bye."]),
              "carddata.bin": smallfiles.build_pack([bytes(icon_sys), b"\x00\x00\x01\x00" + bytes(64)]),
              "yosikawa\\obj01.xtx": b"XTX\x00" + bytes(60),
@@ -552,6 +645,13 @@ def self_test() -> int:
         vids = [r for r in rows if r.group == "video"]
         check(len(vids) == 1 and "staff roll" in vids[0].source, "the staff-roll movie is video text, matched once")
         check(any(r.status == "not loaded" for r in rows), "the placeholder quest file is 'not loaded'")
+        ban = [r for r in rows if "bat.namePut" in r.source]
+        fp = [r for r in rows if "samp.fontPut" in r.source]
+        check(len(ban) == 1 and ban[0].count == "2 call(s), 1 distinct string(s) in 1 bank(s)" and len(fp) == 1
+              and fp[0].count == "1 call(s), 1 distinct string(s) in 1 bank(s)",
+              "battle banners and fontPut strings are counted from the scripts' calls")
+        check(native_counts([str(iso)]) != NATIVE_FACTS, "the retail script counts differ from a mini disc's (the "
+                                                          "--verify check can fail)")
         check(problems == [], "verify: the unedited trees of the mini disc import as no change")
         out = format_rows(rows)
         check(out.index("== Text the kit edits") < out.index("== Strings in the executables")

@@ -130,6 +130,37 @@ the 587 non-ASCII USA strings and none of the 15,536 Japanese ones would be
 refused (one of the demo's 5,055 would: a code with no cell in its font). Not
 checked: `$` codes, `%` directives and `[Speaker]` tags you change.
 
+### Battle banners
+
+The scripts pass 416 different names, in 1,363 calls from 113 map banks, to
+the native `bat.namePut` (OV01 `FUN_00aa1330`: the fourth argument is
+looked up in the bank through `FUN_00a9f238`, the lookup `bat.msgPut` uses,
+and handed to `FUN_002355d8`, which draws the box). They are the enemy skill
+and action names (`$zoom13;Regenerate Consciousness`, `$zoom13;Point Blank
+Rapid-Fire (Strike/Pierce)`), and they are not in `batdat.us`: each bank
+that uses a name has its own copy. The export marks every banner block with
+`# battle banner (bat.namePut)` and, when the same name is in several banks,
+how many. `text-import` then:
+
+* notes (does not refuse) a name whose copies were not all edited alike,
+  listing the banks with each text, since each copy is shown in its own
+  scene's battles;
+* refuses a banner that ends with a one-byte letter from 0x80 up (`é` last):
+  the banner's width function `FUN_002353b8` takes every byte from 0x80 up
+  together with the next byte, so it would step over the terminator and read
+  past the string;
+* notes a banner wider than any banner of the disc. `FUN_002355d8` makes the
+  box `FUN_002353b8(text) + 0x18` wide with no upper limit; `FUN_002353b8`
+  scales each character by `$zoomNN;` over 16. The kit estimates the width
+  with the font's metrics (the state the codes `19 03` set for the width
+  function is not modelled, so it is an estimate) and compares it with the
+  widest retail banner; the screen's own limit was not read.
+
+`samp.fontPut` draws the strings `100`, `802` and `102` (28 calls in 17
+scene banks); they look like a debug or template routine (not checked in
+the game). Both are counted by `text-coverage`, and `dialogue` lists the
+banners as their own kind.
+
 ### Growing a text bank: `text-import --grow` (not yet seen in game)
 
 **Status: read from the code and exercised on disc images. NOT YET SEEN IN
@@ -213,6 +244,36 @@ Why these limits, and how sure they are:
   original**, whatever the slot is (on the retail discs every slot equals the
   sector-rounded size anyway: 495 of 495 USA text objects, checked on all
   five discs). They are never relocated. Read from code, not seen in game.
+* **The memory-card slot number** (USA). Twelve `MainMenu.txd` prompts end
+  "...in MEMORY CARD slot £°." (blocks 0218, 0539, 0541, 0543-0548, 0551,
+  0553, 0559). The `£°` is the bytes A3 B0, a placeholder: before the prompt
+  is shown, `FUN_00238038` walks the string the way the print function does
+  (a byte from 0x80 up steps two bytes, any other byte one) and at the first
+  placeholder it finds (82 4F, A3 B0 or `##`, read from 0x69DA30, 0x69DA38
+  and 0x69DA40), or at a digit it wrote before (07 then `1` or `2`), it
+  writes 07 and the slot's digit. `FUN_002381a8` does this to blocks 0x21F,
+  0x220, 0x224, 0x227 and 0x22F (543, 544, 548, 551, 559) and `FUN_0023b210`
+  to 0x22F; whether the other seven are stamped by code not read, or ever
+  show `£°` as it is, is not known. The export writes a `#` note above every
+  block that holds a placeholder, and `text-import` refuses an edit of such a
+  block unless the same walk still finds the same number of placeholders:
+  keep `£°` once, where the number belongs, and put a space or another plain
+  ASCII character right before it. An accented letter right before it is
+  refused, because the walk would read that letter with the `£` as one pair
+  and never see the placeholder.
+* **The Skill Tutorial** (`Tutorial.txd`, 255 entries) is a script, not a
+  list of messages. `FUN_00215f10` runs the entries in order by their first
+  byte: `%` is a command picked by the next bytes (`%p`; `%tNN`, which
+  counts NN runs of the routine, two digits; `%c+`, `%c-`, `%l0` to `%l2`,
+  `%a0` to `%a6`, `%f`, `%m`, `%g`, `%j`, `%P`, `%s`, `%e`, `%r`), `*` calls
+  `FUN_00215de8`, an empty entry or one that
+  starts with `#` is skipped, and any other entry is a page of text. On the
+  USA disc 56 entries are text and 199 are commands or empty. The export
+  marks every non-text entry with a `#` note; `text-import` refuses a
+  change to one, and refuses a page of text edited to be empty or to start
+  with `%`, `*` or `#` (it would then be skipped or run). The same rule is
+  applied to the Japanese `Tutorial.txd`, though only the USA function was
+  read.
 * **Quest text**: `FUN_00232100` allocates by the file's TOC size
   (`FUN_002320b0` asks `FUN_0019bc68` for the size and passes it to the
   allocator `FUN_0020b738`), so a larger file might load; how much room that
@@ -221,8 +282,30 @@ Why these limits, and how sure they are:
   numbers, braces, field names, the ruler lines of the Japanese files) is
   compared with the original. The files are Shift-JIS; on a Japanese disc a
   typed character is checked through its JIS code (assuming the game converts
-  one to the other), on a USA disc typed non-ASCII is refused (how the USA
-  build reads high bytes in these files has not been read).
+  one to the other).
+* **Quest characters on the USA build.** The copy `FUN_0022ec18` takes a
+  byte below 0x80 as it is, and every byte from 0x80 up together with the
+  byte after it, whatever that is; it then rewrites the pair in place with
+  `FUN_0023ebb8`, which is Shift-JIS to EUC-JP arithmetic (the lead doubled,
+  then 0xA0 or 0x20 added when the trail is above 0x9E and the trail plus 2,
+  else 0x9F or 0x1F added and the trail plus 0x60 or 0x61). The retail files
+  hold three such pairs: `81 5C` in `QuestMes.txt` ("Sidney―my sweet")
+  becomes `A1 BD`, the dash; `83 B6` in `Treasure.txt` ("Ω System") becomes
+  `A6 B8`, Omega; and `82 A0` in `Citizen.txt` ("Moby Dick's Caf..")
+  becomes `A4 A2`, the cell the USA font draws as `é`. So the tree of these
+  three files shows what the game draws: a pair whose converted bytes the USA
+  print function reads as one of its symbols is that symbol (`―`, `Ω`), any
+  other pair is two escapes of the file's bytes (`Caf⟦82⟧⟦A0⟧`). In a
+  changed line you may type the USA build's two-byte symbols (`― 【 】 × ☆ ★
+  ○ □ ■ △ ♪`, the Greek letters and the rest of row A6), which are written
+  as the Shift-JIS pair that converts to them and checked against the font
+  like any typed character. A one-byte Latin-1 letter (`é` = 0xE9) cannot be
+  written: the reader would pair it with the next character and convert
+  both. A kana is refused too, because it converts to a cell of the USA font
+  that does not hold that kana. Escapes are written as given, so `⟦82⟧⟦A0⟧`
+  still gives the retail `é`. None of this has been looked at in the running
+  game: no edited quest text has been seen on screen, and how the USA draw
+  path renders a converted pair is read from the code only.
 * **Quest fields.** The file is not kept as it is: each loader reads a fixed
   number of records into a zeroed buffer of fixed-size records and copies
   every text into its field (`FUN_0022ee08` for `QuestMes.txt`: 36 records of
@@ -304,7 +387,19 @@ Why these limits, and how sure they are:
   list), but a pointer into the middle of a string cannot be ruled out from
   the files, and an in-place edit would show through it.
 * **Subtitles**: see "Subtitle limit" below, and the notes under it.
-
+* **Battle banners** are bank strings: the name of an enemy's skill or action,
+  which a battle shows in a box (`$zoom13;Medica`). See
+  "Battle banners" below.
+* **Japanese leftovers.** 127 Shift-JIS strings in 64 USA banks and 20
+  EUC-JP strings in 10 (`sc1270`, `sc3180`, `sc3200`, `sc4620`, `sc4640`,
+  `sc4670`, `sc4690`, `sc4700`, `sc4720`, `sc6110`) are the developers' test
+  lines ("11テストメッセージ\n表示中", "12の人です"), and `MainMenu.txd`
+  blocks 0318 and 0399 are EUC-JP notes ("↑予備ではなく、空欄で　コンディション予備",
+  "以下雑用データ"). The USA codec shows their bytes as Latin-1 letters, so the
+  export adds a reading line above each, `#sjis: ...` or `#euc: ...` (a
+  comment: it is not imported). The test lines sit behind the results 11 and
+  12 of `talk.check` in a template routine; whether a player can reach any of
+  them is not known. They round-trip and can be edited like any string.
 The files of the two whole-file kinds must come back exactly as you want
 them on the disc: line ends are kept as they are (LF in the subtitle files,
 CRLF in the quest files, which `text-import` restores when an editor turned
@@ -523,9 +618,8 @@ not been read. A reference from the boot executable's own code into that
 address range cannot say which overlay it means and is not counted.
 
 **Run it last.** After an import the boot executable is no longer the retail
-one, so `text-import`, `font-extract`, `recolor` with text and `lang-scan`
-refuse the image (they read their tables from the executable and check its
-sha256). So: `text-import` first, then `exe-import` on its output. For a
+one, so `text-import` and `font-extract` refuse the image (they read their
+tables from the executable and check its sha256). So: `text-import` first, then `exe-import` on its output. For a
 second round on an image that already went through `exe-import`, pass the
 retail disc as `--retail`: the executables are taken from it, every edited
 string of the tree is applied to them, and the result replaces the ones on
@@ -552,12 +646,29 @@ discs:
 | Text | Where | Command | Status |
 |---|---|---|---|
 | dialogue and scene text | 465 `.sbl` banks, 9,699 strings | text-export / text-import | editable (banks grow within their loader's room) |
-| menus, item, skill and location names, help, database | 3 `.txd` files, 903 strings | text-export / text-import | editable within the file's sectors |
+| menus, item, skill and location names, help, database, the Skill Tutorial | 3 `.txd` files, 903 strings | text-export / text-import | editable within the file's sectors; the 12 memory-card slot placeholders kept, the 199 tutorial commands unchanged |
+| battle banners (enemy skill and action names, `bat.namePut`) | 1,363 calls, 416 names in 113 banks | text-export / text-import (in the banks) | editable; copies edited unalike get a note |
 | battle names, descriptions and messages | `batdat.us`, 1,085 strings | text-export / text-import | editable within the file's sectors (section 17 in place) |
-| quest, citizen and treasure text | 6 `iwase\*.txt` | text-export / text-import | editable within each field |
+| quest, citizen and treasure text | 6 `iwase\*.txt` | text-export / text-import | editable within each field; on the USA build ASCII and the two-byte symbols |
 | movie subtitles | 45 files (20 + 25) | text-export / text-import | editable |
 | memory-card title | `carddata.bin` | text-export / text-import | in place |
-| strings in the executables | 3,497 + 678 + 47 | exe-export / exe-import | in place, run last |
+| strings in the executables | 3,498 + 678 + 47 | exe-export / exe-import | in place, run last |
+| Japanese developer leftovers | 127 Shift-JIS and 22 EUC-JP strings in 75 bank and menu files | text-export / text-import | editable, with a `#sjis:` / `#euc:` reading; probably debug |
+| `samp.fontPut` digit strings | 28 calls, 3 strings | text-export / text-import (in the banks) | editable; probably debug |
+
+**Languages.** The USA build reads its text banks (`cf\en\`, `model\map\en\`)
+and subtitles (`movie\en\`) from a language folder picked by
+`FUN_001948e8`, which indexes the string `enjpendefriteszhko` two letters at
+a time by the byte `DAT_0063f87a`. That byte is also the Subtitles switch
+of the options screen: `FUN_0023b210` shows `MainMenu` 0x16D (`OFF`) when it
+is 0 and 0x16E (`ON`) otherwise, `FUN_001e7d08` draws subtitle lines only
+when it is not 0, and the options code steps it through the table at
+0x69D4F0, which holds 0 and 2. Both values read `en`. Both USA discs carry
+only `en` folders (352 `cf\en` objects, 45 `movie\en`), so the text above
+is all the text the USA build has. The language names `English` to
+`Spanish` (`MainMenu` 0367-0371) are exported like any menu string; whether
+the game draws them has not been seen. A second language would need a code
+change to reach another folder.
 
 Text that is drawn into pictures is listed apart, because it needs picture
 editing: the UI sheets (`yosikawa\obj01.xtx`, `seg01`, `g2_00`-`g2_02`,
@@ -598,6 +709,21 @@ USA disc that each is where the list says:
 | `model\map\E2_UZU01.txy` | `book_kou_us`, `book_hei_us`, `book_bou_us` and their `_01_us` | kanji numerals (the Japanese entries show 甲 乙 丙) |
 | `model\map\E2_MID01.txy`, `E2_MID02` | `m01_con0000_us`, `m01_con0000_1_us` | no words (the Japanese entry carries a label) |
 | `yosikawa\model\atk.txy`, `rsv.txy` | `dn_atk02`, `dn_rsv02` | `<< COMBATANT >>`, `<< RESERVE >>` (drawn so that it reads RESERUE); Japanese `dn_atk`, `dn_rsv` |
+| `model\map\E2_MIL12.txy` | `warning` | WARNING |
+| `model\map\E2_KUK11.txy` | `kanbanmoji` | Reel Dude's Fishing Lab. (shop sign) |
+| `model\map\E2_KUK02.txy` | `yado_kanban01` | OUR TREASURE / INN.SHOP (sign) |
+| `model\map\E2_KUK05.txy` | `kanban01` | IRONMAN (poster) |
+| `model\map\E2_ELS05.txy` | `font0001` | MENU, with a line of small print |
+| `model\map\CFEVE04.txy` | `koukoku_moji02` | SECOND MILTIA SPACE PORT |
+| `model\map\CFEVE03.txy` | `text` | five lines of blocky English words, partly legible |
+| `model\map\E2_MIL02.txy` | `poster07` | SECOND MILTIA AEROSPACE INDUSTRY |
+| `model\map\E2_MOM11.txy` | `toilet_poster`, `kanban` | SURPRISE & DISCOVERY!! Dogs love GRACE ONE!! / GRACEFUL DOG FOOD; NEW TASTY FLAVOR / VIRGINIAN BRIGHT / refresh yourself!! |
+| `model\map\E2_DYU03.txy` | `keijiban4` | DURANDAL, with columns of small print (notice board) |
+| `model\map\E2_MIL04.txy` | `nagare_moji03` | INFORMATION SERVICE COUNTER |
+
+A survey of entry names (names with `moji`, `kanban`, `poster`, `sign`,
+`text`, `menu` and the like) lists 1,302 entries in 238 files, embedded
+blocks included; a name is a hint, not proof that words are drawn.
 
 The 12 `_us` entries in 5 map files are names the Japanese build has
 without the suffix, most with another picture: the localizers redrew them.

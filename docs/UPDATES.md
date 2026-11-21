@@ -1,5 +1,39 @@
 # Updates
 
+## 2026-11-20 (round 3): text coverage, the last gaps
+
+* **Memory-card slot number (USA).** Twelve `MainMenu.txd` prompts carry the
+  placeholder `£°` (A3 B0) that `FUN_00238038` overwrites with the slot's
+  digit. The export notes it above each block; `text-import` refuses an edit
+  that drops it or hides it from the game's walk (an accented letter right
+  before it).
+* **Skill Tutorial commands.** 199 of the 255 `Tutorial.txd` entries are
+  commands `FUN_00215f10` runs (`%p`, `%tNN`, `*`, ...) or entries it skips.
+  They are marked, and `text-import` refuses a change to them or a page of
+  text turned into one.
+* **USA quest characters.** The quest reader converts every pair from
+  Shift-JIS to EUC-JP (`FUN_0022ec18` -> `FUN_0023ebb8`, ported). The three
+  files the USA loaders read now show what the game draws (`―`, `Ω`; other
+  pairs as escapes, so the retail `Caf⟦82⟧⟦A0⟧`), and typed USA symbols are
+  accepted through the inverse conversion instead of every non-ASCII
+  character being refused. A Latin-1 letter is still refused, with the
+  reason. Not yet looked at in the running game.
+* **Battle banners.** The 416 names (1,363 calls) scripts pass to
+  `bat.namePut` are marked in the bank files and listed by `dialogue` as
+  `(banner)`; `text-import` notes copies edited unalike and banners wider
+  than any retail one, and refuses one whose width walk would run past its
+  end. `text-coverage` counts them, and `samp.fontPut`'s digit strings.
+* **Japanese leftovers** get a `#sjis:` or `#euc:` reading line in bank and
+  menu exports (the 20 EUC test lines and `MainMenu` 0318/0399 had none),
+  and Latin-1 lines no longer get a false Shift-JIS hint.
+* **Executable**: the field-debug label `ハシゴ` (0x006899D0) is listed by
+  `exe-export` (a control code and three kana now count as text in the print
+  grammar; on the retail executables that adds this run only).
+* **Docs and app**: commands named on this branch only (no `lang-scan`), the
+  app self-test checks that every command a card names exists; twelve more
+  texture entries with words in `TEX_WORDS`; the language folder and the
+  Subtitles switch share one byte (MODDING.md, "Languages").
+
 ## 2026-11-20 (later still): text coverage, round 2
 
 * **Battle strings grow (USA).** The string fields of the battle database
@@ -61,7 +95,7 @@
   string's slot (`### @0x0068b678 max 15 bytes` for `Saving...`). Written
   back in place only, the rest of the slot zero-filled, nothing moved.
 * `exe-import` must be the last step: afterwards the executable is not the
-  retail one and `text-import`, `font-extract` and `lang-scan` refuse the
+  retail one and `text-import` and `font-extract` refuse the
   image. `--retail` starts again from the retail executables for a second
   round.
 * The boot executable carries the title overlay's bytes as a third segment

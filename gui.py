@@ -151,18 +151,22 @@ COMMAND_HELP = {
           "spoken line shown beside the instruction that uses it. "
           "Example path: <code>cf\\sc1010.sb</code>.",
     "text-export": "Write the game's text to an editable UTF-8 tree, one file per text object: dialogue banks, "
-                   "menus (item, skill and location names, help, the database), the battle names and messages, "
-                   "the quest, citizen and treasure text, movie subtitles and the save's title in the memory-card "
-                   "browser. Strings in the executables are <em>exe-export</em>.",
+                   "menus (item, skill and location names, help, the database, the Skill Tutorial), the battle names "
+                   "and messages, the battle banners, the quest, citizen and treasure text, movie subtitles and the "
+                   "save's title in the memory-card browser. <code>#</code> lines are notes (a banner, a tutorial "
+                   "command, the memory-card slot number, a reading of Japanese leftovers). Strings in the "
+                   "executables are <em>exe-export</em>.",
     "text-import": "Write an edited text tree back into a <em>copy</em> of the disc: dialogue banks, the inline "
                    "script text (Japan and the demo), menus, battle names and messages, quest, citizen and treasure "
                    "text, movie subtitles and the save's title in the memory-card browser. Each kind keeps to the "
                    "limit its loader allows (banks and menus within their room, a longer battle string moves the "
                    "rest of its section down within the file's sectors, quest texts within their fields); anything past "
-                   "a limit is refused and nothing is written. An unedited tree imports as no change; every write "
-                   "is read back.",
+                   "a limit is refused and nothing is written. The memory-card slot number and the Skill Tutorial's "
+                   "commands are kept; a battle banner edited in one bank but not its copies gets a note. An unedited "
+                   "tree imports as no change; every write is read back.",
     "dialogue": "Every spoken and displayed line in the order the game plays it: one transcript per scene, field "
-                "and battle script with speakers, choices and branches, the movies' and real-time events' subtitles "
+                "and battle script with speakers, choices, battle banners and branches, the movies' and real-time "
+                "events' subtitles "
                 "as SRT, and <code>dialogue.csv</code>. Each line keeps its bank number, so it maps back to the "
                 "<em>text-export</em> block you edit. <em>Voice</em> also cuts one WAV per timed line (ffmpeg). "
                 "Reading only: it writes nothing to the disc.",
@@ -186,7 +190,7 @@ COMMAND_HELP = {
                   "tree, one <code>### @ADDRESS max N bytes</code> block per string.",
     "exe-import": "Write the edited strings back <em>in place</em> into a copy of the disc: each at most its "
                   "<code>max N</code> bytes, the rest of its slot filled with zeros. Run it <em>last</em>: "
-                  "afterwards the executable is not the retail one and text-import, font-extract and lang-scan "
+                  "afterwards the executable is not the retail one and text-import and font-extract "
                   "refuse the image. For another round, give the retail disc as <em>Retail disc</em>.",
     "text-coverage": "List every place the game shows text and what the kit does with it, counted from the disc: "
                      "the text it edits, the strings in the executables, and the words drawn into pictures and "
@@ -1134,6 +1138,10 @@ def self_test() -> int:
         n in c["aliases"] and COMMAND_HELP.get(c["name"]) for c in cmds))
     check(not missing, "every cli.py subcommand's card has its long help text"
           + (f" (missing: {', '.join(missing)})" if missing else ""))
+    named = {m for v in COMMAND_HELP.values()
+             for m in re.findall(r"\b(?:text|exe|font|lang|texture|model)-[a-z]+\b", v)}
+    check(named and named <= set(sub.choices), "every command a card's text names is a cli.py subcommand"
+          + (f" (not: {', '.join(sorted(named - set(sub.choices)))})" if named - set(sub.choices) else ""))
     dump = find_command("dump")
     check(dump is not None and "extract" in dump["aliases"], "dump and extract share one card")
     form = {"iso": ["/d/Disc 1.iso\n/d/Disc 2.iso"], "out": ["/o"], "code": ["on"], "glob": [""]}

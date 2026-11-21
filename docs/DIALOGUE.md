@@ -65,6 +65,15 @@ the ones that put a line on screen:
 | `talk.menuAddItem` | 534 | a choice; the options are one string split by `\n` | (0, text) |
 | `cfe.setMes` | 1,946 | a real-time event subtitle | (text, start, end, voice, 0) |
 | `bat.msgPut` | 688 | a line spoken in battle (`$col`/`$zoom` codes) | (x, y, text, ..., ..., ...) |
+| `bat.namePut` | 1,363 | a battle banner: the name of an enemy's skill or action, 416 different names (`$zoom13;Medica`) | (..., ..., ..., text, ...) |
+
+`bat.namePut` lines are listed as `(banner)` in the transcripts and with
+native `bat.namePut` in `dialogue.csv`. OV01's `FUN_00aa1330` looks the
+fourth argument up in the bank through `FUN_00a9f238` (the lookup
+`bat.msgPut` uses) and hands it to `FUN_002355d8`, which draws the box as
+wide as the text. A name has a copy in every bank whose battles use it;
+`text-export` marks them and `text-import` notes copies edited unalike
+(docs/MODDING.md, "Battle banners").
 
 `cfe.setMes` is two things. Called with an empty text it names the event's
 voice track, `cfevent/S-01-03-00/S01_03_00`, which is
@@ -94,10 +103,13 @@ by the scene's author.
 Voice without text is listed as well, so the order of what you hear is
 complete: `bat.streamPlay` (303 battle barks, `sound\adx\battle\<name>.adx`,
 mostly without a subtitle) and `runtime.adxplay`/`runtime.adx` (31 field voice
-clips, `sound\adx\CF_*.adx`). Everything else the scripts pass as text is a
+clips, `sound\adx\CF_*.adx`). Most else the scripts pass as text is a
 resource name and is left out: effect names to `runtime.setNumber`, motion
-files to `cfe.ldMt`, movie names to `runtime.mpeg2`, skill banners to
-`bat.namePut` (1,363 of those).
+files to `cfe.ldMt`, movie names to `runtime.mpeg2`. Not resource names but
+also left out of the transcripts: the strings `100`, `802` and `102` that
+`samp.fontPut` draws (28 calls; they look like a debug or template routine,
+not checked in the game). They are exported in the bank files like every
+string, and `text-coverage` counts them.
 
 Speakers: field and battle lines carry `[Speaker]` in the text and it is split
 off. Event and movie lines carry no speaker anywhere on the disc.

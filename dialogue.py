@@ -18,6 +18,8 @@ places, and this module walks all of them in the order the game plays them:
                         times in 30 fps frames; the call with an empty text names
                         the event's voice track (``cfevent/BE6302/BE6302``)
   ``bat.msgPut``        a line spoken in battle (x, y, text, ..., ...)
+  ``bat.namePut``       a battle banner: an enemy's skill or action name (4th of
+                        5 arguments; OV01 FUN_00aa1330 -> FUN_002355d8)
   ====================  ==========================================================
 
   Voice without text is listed too: ``bat.streamPlay`` (battle barks,
@@ -86,6 +88,7 @@ DIALOGUE_NATIVES = {
     "talk.menuAddItem": "choice",
     "cfe.setMes": "event",
     "bat.msgPut": "battle",
+    "bat.namePut": "banner",
 }
 VOICE_NATIVES = {"bat.streamPlay": "battle voice", "runtime.adxplay": "voice", "runtime.adx": "voice"}
 
@@ -419,7 +422,7 @@ def transcript(scene: str, header: str, lines: List[Line]) -> str:
             who = f"{ln.speaker}: " if ln.speaker else ""
             out.append(f"{pad}{when}{who}{ln.text}{ref}")
         else:
-            kind = {"talk.smsg": "(message)", "bat.msgPut": "(battle)"}.get(ln.native, "")
+            kind = {"talk.smsg": "(message)", "bat.msgPut": "(battle)", "bat.namePut": "(banner)"}.get(ln.native, "")
             if ln.speaker:
                 out.append(f"{pad}{ln.speaker}{' ' + kind if kind else ''}: {ln.text}{ref}")
             else:
@@ -675,6 +678,31 @@ def _scene_scripts(disc: Disc) -> Iterator[Tuple[str, str, bool, int, object, Op
         yield stem, path, is_battle, hit[0], hit[1], bank
 
 
+def native_text_uses(disc: Disc, names: Iterable[str]) -> Dict[str, List[Tuple[int, str, int, bytes]]]:
+    """For each native named: (chain, bank path, .sbl index, the string's bytes) of every text
+    argument a call passes it, over every scene and map script that has a string bank (USA).
+    One entry per call: a string two calls pass is listed twice."""
+    want = set(names)
+    out: Dict[str, List[Tuple[int, str, int, bytes]]] = {n: [] for n in want}
+    for stem, path, battle, chain, entry, bank in _scene_scripts(disc):
+        if not bank:
+            continue
+        data = disc.read(chain, entry)
+        if data[:4] != sb.MAGIC:
+            continue
+        script = sb.parse(data)
+        strings = None
+        for _w, name, args in native_calls(script):
+            if name not in want:
+                continue
+            if strings is None:
+                strings = sbl.parse(disc.read(*bank))
+            for kind, v in args:
+                if kind == "text" and isinstance(v, int) and v < len(strings):
+                    out[name].append((bank[0], bank[1].path, v, strings[v]))
+    return out
+
+
 def run(isos: List[str], out: Path, voice: bool = False, only: Optional[List[str]] = None) -> int:
     disc = Disc(isos)
     out.mkdir(parents=True, exist_ok=True)
@@ -874,6 +902,16 @@ def self_test() -> int:
     tx = transcript("sc0000", "", lines)
     check("if:" in tx and "else:" in tx and "CHOICE: Yes | No" in tx and "[00:02.00-00:05.50]" in tx,
           "transcript shows the branches, the choice and the event timing")
+
+    # a battle banner: bat.namePut(1, 2, 3, text, 5) is listed as its own kind
+    code = []
+    emit(_op(0x04, 1), _op(0x28), _op(0x04, 2), _op(0x28), _op(0x04, 3), _op(0x28), _op(0x06, T(0)), _op(0x2A),
+         _op(0x04, 5), _op(0x28), _op(0x04, 5), _op(0x15, 0), _op(0x19), _op(0x13))
+    bscript = sb.Script(_assemble(code), [("main", 0)], [("bat", "namePut")], b"\0" * 4, "test\\bt")
+    blines = script_lines(bscript, [b"$zoom13;Medica"], "E2_TEST", battle=True)
+    check([(l.native, l.text, l.sbl_id) for l in blines] == [("bat.namePut", "Medica", 0)]
+          and "(banner) Medica  [#0]" in transcript("E2_TEST", "", blines),
+          "a battle banner (bat.namePut) is a line of its own kind, its $codes cleaned")
 
     # audio slicing and loudness
     rate, ch = 1000, 2
