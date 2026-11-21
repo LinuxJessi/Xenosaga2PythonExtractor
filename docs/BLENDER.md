@@ -19,6 +19,16 @@ One model without dumping the disc first:
 python cli.py model --iso "Disc 1.iso" --path 'model\char\pc\kosmos00.pxy' --out kosmos00.glb
 ```
 
+`model` adds every motion file with the model's name (`motion\kosmos00.xap`,
+and `yamamoto\mot\kosmos00.xap` when there is one); `--motion PATH[#slots]`
+picks others by path (`--motion 'yamamoto\mot\kosm00.xap#0,1'`), `--slots`
+keeps some slots, `--face` adds the face clips, `--no-motion` leaves them
+out. `browse` adds the same-named motion files and lists them in the
+`motion` column of `models.csv`. A clip whose block counts are not the
+skeleton's may belong to another model: its action name ends in the counts,
+`motion/gno010#03 [counts A30/55]`, and `model --matched-only` leaves such
+clips out ([MOTION.md](MOTION.md), "Clips whose run counts differ").
+
 ## First look: three things that trip people up
 
 * **It looks grey.** Blender opens in Solid shading, which ignores textures.
@@ -68,7 +78,14 @@ craft, `model/mobj/` map objects.
 
 ## What to expect
 
-* **Nothing animates.** The motion files are not decoded. Bones pose by hand.
+* **Animations: one action per motion clip, at 30 fps.** Set the scene to 30
+  fps before importing (Output Properties ▸ Frame Rate). In the Dope Sheet,
+  switch to the Action Editor and pick a clip (`motion/shion00#01`); the
+  names are the disc file and the slot, since the game's own names for the
+  slots are not known. Face clips (`model --face`) key only the six face
+  joints: push the body action down to the NLA and put the face action on a
+  strip above it. Hair, coats and skirts do not swing: the game simulates
+  them and the kit does not ([MOTION.md](MOTION.md)).
 * **Materials are double-sided and faces follow the normals.** About one
   triangle in thirty is stored facing against its normal, and the game mostly
   draws without culling, so the file order cannot be trusted for facing.

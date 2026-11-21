@@ -39,6 +39,8 @@ The Episode I kit's rules, kept (the first one with three packages added):
                             │                         vsf.py  prj.py  midi.py       sound, music
                             │                         songfx.py smallfiles.py       effects, one-offs
                             │                         spu2synth.py                  the PS2's music render
+                            │                         pxy.py xhr.py xap.py gltf.py  models, skeletons, motion
+                            ├─ model ─► pxy.py + xhr.py + xap.py ─► gltf.py   (one model, its clips as animations)
                             ├─ sb ─► sb.py + sbl.py
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
                             ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py, exetext.py
@@ -75,6 +77,10 @@ The Episode I kit's rules, kept (the first one with three packages added):
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |
 | `songfx.py` | the songs' effect settings, and renders that follow them |
 | `spu2synth.py` | the songs as the PS2 plays them: KORG's driver rules on a model of the SPU2 and its reverb (numpy; [MUSIC.md](MUSIC.md)) |
+| `pxy.py` | model meshes to `.glb` ([MODELS.md](MODELS.md)); `vif.py` walks their VIF streams |
+| `xhr.py` | skeletons: the six runs of transforms and their rest pose |
+| `xap.py` | motion clips (`.xap` / `.fap`): decode, the engine's pose, glTF animations ([MOTION.md](MOTION.md)) |
+| `gltf.py` | the `.glb` writer and reader, animation append / sample / validate |
 | `smallfiles.py` | packs, title logos, the save icon, the battle database, map/actor tables |
 | `repack.py` | writes objects back into a disc copy (same size, or grown and moved); plain ISO files in place (`fs_replacements`) |
 | `recolor.py` | hue-shifts named textures in every copy on a disc |

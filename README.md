@@ -151,7 +151,7 @@ on their own. `python build.py` makes a standalone app with PyInstaller
 
 | | |
 |---|---|
-| Models | all 944 `.pxy` meshes (941 on the Japanese disc, 666 in the demo) as `.glb`: mesh, UVs, textures inside the file, vertex colours, skin weights and, for the 562 with a usable skeleton file, an armature whose bones sit on the mesh. `browse` writes them all; `model` does one straight from the disc ([docs/BLENDER.md](docs/BLENDER.md), [docs/MODELS.md](docs/MODELS.md)) |
+| Models | all 944 `.pxy` meshes (941 on the Japanese disc, 666 in the demo) as `.glb`: mesh, UVs, textures inside the file, vertex colours, skin weights and, for the 562 with a usable skeleton file, an armature whose bones sit on the mesh, plus the motion clips of the same name as one animation each (4,340 clips decode; [docs/MOTION.md](docs/MOTION.md)). `browse` writes them all; `model` does one straight from the disc ([docs/BLENDER.md](docs/BLENDER.md), [docs/MODELS.md](docs/MODELS.md)) |
 | Textures | every `.txy` page: 65,938 PNGs, named the way the artists named them (`shion00_hair`, `kosmos00_face`), skybox faces and animated pages one per bank; plus 1,333 more from the pages inside effect files (`textures_png/_embedded/`) |
 | UI sheets | the 85 `.xtx` sheets: citizen portraits, item icons, the title menu words |
 | Fonts | the four glyph sheets of each font, plus the proportional metrics |
@@ -240,8 +240,14 @@ Changes: [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Still open
 
-* Models: motion (`.xap`, `.fap`) is not decoded, so bones pose but nothing
-  plays. Faces are oriented by their normals and materials are double-sided,
+* Models: motion plays (every `.xap` / `.fap` clip decodes; one glTF action
+  per clip, [docs/MOTION.md](docs/MOTION.md)), but the simulated hair and
+  cloth stay stiff, the visibility lists are not applied, the game's
+  real-time playback rate is unverified, 331 motion files whose name
+  differs from any model's are not paired automatically, and 189 same-named
+  clips whose block counts differ from the skeleton's (some plainly another
+  model's) are written flagged, since which clip the game plays on which
+  skeleton is not traced. Faces are oriented by their normals and materials are double-sided,
   because about one triangle in thirty is stored facing the other way.
   Fifteen skeletons differ from their mesh's bind pose on some joints. Whether
   models come out mirrored, the colour scale and the alpha modes have not

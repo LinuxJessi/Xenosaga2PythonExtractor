@@ -183,14 +183,15 @@ def _one_model(args) -> dict:
     beside it, to a .glb Blender opens: mesh, UVs, textures, vertex colours, skin weights
     and an armature. A file the decoder does not understand is reported, never guessed at;
     one that decodes but fails a numeric check is still written and says which check."""
-    src, dest, path = args
+    src, dest, path, motion_files = args
     import pxy
     import txy
     import xhr
     from vif import VifError
 
     src = Path(src)
-    row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "status": ""}
+    row = {"file": path, "skeleton": "", "textures": "", "triangles": "", "checks": "", "motion": "",
+           "motion_counts_differ": "", "status": ""}
     try:
         p = pxy.parse(src.read_bytes())
         txy_data = entries = skel = None
@@ -220,7 +221,10 @@ def _one_model(args) -> dict:
             # a skeleton file with fewer transforms than the mesh has joints: the mesh
             # is still right, so it is written with its joints left where the file binds them
             row["skeleton"] = f"not used ({e})"
+            skel = None
             blob = pxy.to_glb(p, txy_data, None)
+        if skel is not None and motion_files:
+            blob, row["motion"], row["motion_counts_differ"] = _add_motion(blob, skel, motion_files)
     except Exception as e:                           # a damaged file must not stop the others
         known = isinstance(e, (pxy.PxyError, VifError, xhr.XhrError))
         row["status"] = f"not decoded: {e}" if known else f"not decoded: {type(e).__name__}: {e}"
@@ -237,8 +241,53 @@ def _one_model(args) -> dict:
     return row
 
 
+def _add_motion(blob, skel, motion_files):
+    """The same-stem .xap clips as glTF animations (xap.py): (blob, models.csv "motion"
+    text, number of clips whose run counts differ). A clip whose block count in a run it
+    drives is not the skeleton's is not known to be made for it (docs/MOTION.md): it is
+    written with the counts in its name and listed here (clip/xhr). A file that does not
+    decode leaves the mesh as it was and says why."""
+    import xap
+
+    try:
+        sources = []
+        for label, mpath in motion_files:
+            sources.append((label, xap.parse(Path(mpath).read_bytes()), None, False))
+        blob2, summ, _ = xap.add_to_glb(blob, skel, sources)
+    except (xap.XapError, ValueError, KeyError, OSError) as e:
+        return blob, f"not decoded: {e}", ""
+    parts, differ = [], 0
+    for label, _ in motion_files:
+        mine = [s for s in summ if s["name"].startswith(label + "#")]
+        text = f"{label}.xap: {len(mine)} animations"
+        odd = [s for s in mine if s["counts_differ"]]
+        differ += len(odd)
+        if odd:
+            text += (f", {len(odd)} whose run counts differ from the skeleton's, not known to "
+                     f"fit it (" + ", ".join(
+                         f"#{s['name'].split('#', 1)[1].split(' ', 1)[0]} "
+                         f"{xap.mismatch_text(s['counts_differ'])}" for s in odd) + ")")
+        parts.append(text)
+    return blob2, "; ".join(parts), differ or ""
+
+
 def browse_models(out: Path, rows, limit) -> None:
-    jobs = [(str(_src(out, r)), str(_dest(out, "models", r).with_suffix(".glb")), r["path"])
+    # motion pairing: '<dir>\\<stem>.xap' anywhere on the disc whose stem is the model's
+    # (motion\\ and yamamoto\\mot\\); other .xap files are bound by tables not traced
+    xap_by_stem: Dict[str, Dict[str, dict]] = {}
+    for r in rows:
+        if r["path"].lower().endswith(".xap"):
+            stem = r["path"].lower().rsplit("\\", 1)[-1][:-4]
+            xap_by_stem.setdefault(stem, {}).setdefault(r["path"].lower(), r)
+    model_stems = {r["path"].lower().rsplit("\\", 1)[-1][:-4] for r in rows
+                   if r["path"].lower().endswith(".xhr")}
+
+    def motion_for(r):
+        stem = r["path"].lower().rsplit("\\", 1)[-1][:-4]
+        return [(m["path"].replace("\\", "/")[:-4], str(_src(out, m)))
+                for _, m in sorted(xap_by_stem.get(stem, {}).items())]
+
+    jobs = [(str(_src(out, r)), str(_dest(out, "models", r).with_suffix(".glb")), r["path"], motion_for(r))
             for r in rows if r["kind"] == "pxy" or r["path"].lower().endswith(".pxy")]
     jobs = jobs[:limit] if limit else jobs
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
@@ -246,8 +295,14 @@ def browse_models(out: Path, rows, limit) -> None:
     _write_csv(out / "browse" / "models.csv", results)
     ok = sum(r["status"] == "ok" for r in results)
     flagged = sum(r["status"].startswith("written") for r in results)
+    animated = sum("animations" in r.get("motion", "") for r in results)
+    differ = sum(r.get("motion_counts_differ") or 0 for r in results)
+    differ_models = sum(1 for r in results if r.get("motion_counts_differ"))
+    unpaired = sum(1 for st in xap_by_stem if st not in model_stems)
     print(f"models: {ok + flagged}/{len(jobs)} .glb written ({flagged} with a failed check, "
-          f"{len(jobs) - ok - flagged} not decoded; see browse/models.csv)", file=sys.stderr)
+          f"{len(jobs) - ok - flagged} not decoded; {animated} with motion, {differ} clips in "
+          f"{differ_models} models with run counts that differ from the skeleton's, flagged; {unpaired} unpaired motion "
+          f"files (no same-named model, see docs/MOTION.md); see browse/models.csv)", file=sys.stderr)
 
 
 # ------------------------------------------------------------------- fonts

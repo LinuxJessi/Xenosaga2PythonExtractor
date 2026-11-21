@@ -26,6 +26,8 @@ Usage:
     python cli.py lang-encode --text TR --glyphset FONTS/glyphset.json --out TR-ENC [--width-kind bank=360]
     python cli.py lang-preview --glyphset FONTS/glyphset.json --text "..." --out line.png
     python cli.py recolor --iso DISC.iso --out PINK.iso [--preset kosmos-hair] [--hue 0.92]
+    python cli.py model   --iso DISC.iso --path 'model\\char\\pc\\shion00.pxy' --out shion00.glb
+                          [--motion 'motion\\shion00.xap#0,1'] [--slots 0,1] [--face] [--no-motion]
     python cli.py self-test
 
 ``dump`` writes OUT/dump/chain0|chain1|chain2/<in-game path>. ARX-compressed
@@ -198,21 +200,80 @@ def cmd_browse(args) -> int:
     return build_browse(Path(args.out), kinds, limit=args.limit, movie_audio=args.movie_audio)
 
 
+def _motion_sources(byp_all, chain, stem, x, args):
+    """(sources for xap.add_to_glb, notes) for `model`: the --motion files (DISCPATH or
+    DISCPATH#0,1 for chosen slots), else every same-stem .xap on the disc; --face adds the
+    face clips of motion\\face_all.fap whose run-D count equals the skeleton's. Clips whose
+    run counts differ from the skeleton's are flagged by xap.add_to_glb (left out with
+    --matched-only)."""
+    import arx
+    import xap
+
+    def find(path):
+        hits = byp_all.get(path.lower().replace("/", "\\"), [])
+        hits = sorted(hits, key=lambda h: h[0] != chain)     # the model's own chain first
+        return hits[0] if hits else None
+
+    def load(path):
+        hit = find(path)
+        if hit is None:
+            raise xap.XapError(f"{path}: not on this disc")
+        _, reader, ent = hit
+        data = reader.read(ent.byte_offset, ent.size)
+        if ent.compressed:
+            data = arx.decompress(data)
+        return ent.path, xap.parse(data)
+
+    def label(disc_path):
+        return disc_path.replace("\\", "/").rsplit(".", 1)[0]
+
+    glob_slots = [int(v) for v in args.slots.split(",") if v.strip()] if args.slots else None
+    wanted = []
+    if args.motion:
+        for m in args.motion:
+            path, _, sl = m.partition("#")
+            wanted.append((path, [int(v) for v in sl.split(",") if v.strip()] if sl else glob_slots))
+    else:
+        paths = sorted({h[2].path for key, hits in byp_all.items()
+                        if key.endswith(".xap") and key.rsplit("\\", 1)[-1][:-4] == stem
+                        for h in hits})
+        wanted = [(pth, glob_slots) for pth in paths]
+    sources, notes = [], []
+    for path, sl in wanted:
+        disc_path, xp = load(path)
+        sources.append((label(disc_path), xp, sl, xp.magic == b"FAP "))
+    if args.face and not any(s[3] for s in sources):
+        disc_path, xp = load("motion\\face_all.fap")
+        fit = sorted(s for c, sl in xp.clips() if c.counts.get("D", 0) == x.counts["D"] for s in sl)
+        if fit:
+            sources.append((label(disc_path), xp, fit, True))
+        else:
+            notes.append(f"--face: no clip of {disc_path} has {x.counts['D']} run-D blocks")
+    return sources, notes
+
+
 def cmd_model(args) -> int:
     """One model straight from the disc to a .glb: the .pxy mesh with the texture pages
-    (.txy) and skeleton (.xhr) of the same name."""
+    (.txy) and skeleton (.xhr) of the same name, and the motion clips (.xap / .fap) as
+    glTF animations (docs/MOTION.md)."""
     import pxy
     import txy
     import xhr
 
     want = args.path.lower()
     stem = want[:-4] if want.endswith(".pxy") else want
-    for chain, iso in sorted(_sources([args.iso]).items()):
+    sources = sorted(_sources([args.iso]).items())
+    byp_all = {}
+    for chain, iso in sources:
         reader, entries = _entries(iso, chain)
-        byp = {e.path.lower(): e for e in entries}
-        e = byp.get(stem + ".pxy")
-        if e is None:
+        for ent in entries:
+            byp_all.setdefault(ent.path.lower(), []).append((chain, reader, ent))
+    for chain, iso in sources:
+        hits = [h for h in byp_all.get(stem + ".pxy", []) if h[0] == chain]
+        if not hits:
             continue
+        _, reader, e = hits[0]
+        byp = {k: ent for k, v in byp_all.items() for ch, _, ent in v if ch == chain}
         read = lambda ent: reader.read(ent.byte_offset, ent.size)
         mesh = pxy.parse(read(e))
         t, x = byp.get(stem + ".txy"), byp.get(stem + ".xhr")
@@ -232,9 +293,43 @@ def cmd_model(args) -> int:
                 raise
             print(f"skeleton not used: {err}", file=sys.stderr)
             blob, skel = pxy.to_glb(mesh, txy_data, None), None
+        motion = "no"
+        if args.no_motion:
+            motion = "off"
+        elif skel is None:
+            motion = "no (no skeleton)"
+        else:
+            import xap
+            short = stem.rsplit("\\", 1)[-1]
+            try:
+                srcs, notes = _motion_sources(byp_all, chain, short, skel, args)
+                for n in notes:
+                    print(f"motion: {n}", file=sys.stderr)
+                if srcs:
+                    blob, summ, skipped = xap.add_to_glb(blob, skel, srcs,
+                                                         matched_only=args.matched_only)
+                    for sm in summ:
+                        if sm["counts_differ"]:
+                            print(f"motion: {sm['name']}: run counts differ from the skeleton's "
+                                  f"(clip/xhr), not known to fit it; written with the counts "
+                                  f"in its name (--matched-only leaves it out)", file=sys.stderr)
+                    for sk in skipped:
+                        print(f"motion: {sk['name']} left out: run counts differ from the "
+                              f"skeleton's (clip/xhr {xap.mismatch_text(sk['counts'])})",
+                              file=sys.stderr)
+                    differ = sum(1 for sm in summ if sm["counts_differ"])
+                    motion = (f"{len(summ)} animations from "
+                              f"{', '.join(s[0] for s in srcs)}")
+                    if differ:
+                        motion += f" ({differ} with run counts that differ, flagged)"
+                    if skipped:
+                        motion += f", {len(skipped)} left out (run counts differ)"
+            except (xap.XapError, ValueError, KeyError) as err:   # never blocks the mesh
+                print(f"motion not decoded: {err}", file=sys.stderr)
+                motion = "not decoded"
         out.write_bytes(blob)
         print(f"{e.path}: {r.get('triangles', '?')} triangles, textures {'yes' if txy_data else 'no'}, "
-              f"skeleton {'yes' if skel else 'no'}, checks "
+              f"skeleton {'yes' if skel else 'no'}, motion: {motion}, checks "
               f"{'all pass' if not r['failed'] else 'FAILED: ' + '; '.join(r['failed'])} -> {out}")
         return 0
     print(f"{args.path}: no such .pxy on this disc (see `list`)", file=sys.stderr)
@@ -434,7 +529,7 @@ def cmd_lang_preview(args) -> int:
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
               "minidisc", "moviesub", "textcodec", "textpack", "glyphs", "langpack", "exetext",
-              "coverage", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
+              "coverage", "vif", "gltf", "xhr", "xap", "pxy", "models_sweep", "vuprog")
 
 
 def cmd_self_test(args) -> int:
@@ -495,6 +590,17 @@ def main(argv=None) -> int:
     p.add_argument("--iso", required=True)
     p.add_argument("--path", required=True, help="e.g. 'model\\char\\pc\\kosmos00.pxy'")
     p.add_argument("--out", required=True, help="the .glb to write")
+    p.add_argument("--motion", action="append", metavar="DISCPATH[#SLOTS]",
+                   help="a .xap / .fap on the disc to add as animations, e.g. 'motion\\shion00.xap' or "
+                        "'yamamoto\\mot\\kosm00.xap#0,1' (repeatable; default: every same-stem .xap)")
+    p.add_argument("--slots", help="only these slots, e.g. 0,1,2 (default: every non-empty slot)")
+    p.add_argument("--face", action="store_true",
+                   help="also add the face clips of motion\\face_all.fap that fit the skeleton")
+    p.add_argument("--no-motion", action="store_true", help="mesh and skeleton only")
+    p.add_argument("--matched-only", action="store_true",
+                   help="leave out clips whose block counts differ from the skeleton's "
+                        "(written by default with the counts in the animation name: not "
+                        "known to be made for this skeleton)")
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("sb", help="disassemble one script, dialogue inline")
