@@ -20,7 +20,9 @@ one string; the text is the line after it::
     [Canaan]What is this thing?
 
 * Inside a block, a line that starts with ``#`` is a COMMENT and is not text
-  (the export writes reading hints that way). To start a line of text with
+  (the export writes notes and reading hints that way: ``#sjis:`` / ``#euc:``
+  for Japanese leftovers, a battle banner, a tutorial command, the slot
+  placeholder). To start a line of text with
   ``#``, write ``⟦23⟧``: the export does this itself, so ``#1`` on the disc
   reads ``⟦23⟧1`` in the tree. A ``#`` anywhere else in a line is plain.
 * ``⟦XX⟧`` is a raw byte. Line breaks inside a string are the game's own
@@ -49,9 +51,22 @@ the same build: chain 0 is the same there and each object is still checked.
 * bank: strings grow and shrink, the bank is rebuilt. It may leave its slot
   only with ``grow`` and never past the room its loader has (``bank_budget``,
   USA only: the rule is read from the USA executable).
-* inline, battle: each string in place, same length or shorter.
+* inline: each string in place, same length or shorter.
+* battle: in place; on the USA build a longer string moves the rest of its
+  section down through the string fields OV01's getters read
+  (``smallfiles.batdat_rebuild``), the file within its sectors.
+* subtitle: a file in the tree for a movie that has none on the disc is
+  refused (``_new_subtitle_files``: the decoder's block has no room for it).
 * menu, quest: rebuilt or rewritten; the file may not need more sectors than
   the original (that is what the loader read; the slot could be larger).
+  USA MainMenu: a string with the memory-card slot placeholder keeps it where
+  FUN_00238038's walk finds it (``slot_problem``). Tutorial.txd: the entries
+  FUN_00215f10 runs as commands or skips may not change, and a page of text
+  may not become one (``tutorial_role``). USA quest files: typed characters
+  go through the reader's pair conversion (``textcodec.UsQuestCodec``).
+* bank strings that scripts pass to ``bat.namePut`` (battle banners): marked in
+  the export; ``banner_report`` refuses one FUN_002353b8 would measure past its
+  end, and notes copies edited unalike and banners wider than any retail one.
 * subtitle: ``moviesub.check_edit``; may be relocated with ``grow``.
 
 Nothing is written unless every file passes; the output image is produced by
@@ -192,6 +207,7 @@ class Context:
         self.codec = textcodec.for_build(self.build)
         self.subcodec = textcodec.subtitle_codec(self.build)
         self.sjis = textcodec.SjisCodec()
+        self.usquest = textcodec.UsQuestCodec()
         self._adr = self._fonts = self._limits = None
 
     def _toc(self, chain: int):
@@ -280,12 +296,86 @@ def _encode(ctx: Context, codec, key: str, old: bytes, body: str) -> bytes:
     return new
 
 
-def _sjis_hint(s: bytes) -> str:
-    try:
-        t = s.decode("shift_jis")
-    except UnicodeDecodeError:
+def _jp_hint(s: bytes) -> str:
+    """A reading hint for bytes that are Japanese developer text in a file of the USA build:
+    ``#sjis: ...`` or ``#euc: ...`` (Shift-JIS tried first), when the bytes decode and
+    nearly all of what they read as is full-width kana, kanji or full-width signs (so a
+    Latin-1 line with accents, and EUC bytes that Shift-JIS would read as half-width kana,
+    get no false hint). A '#' line is a comment: an unedited export still imports as no change."""
+    if not any(b >= 0x80 for b in s):
         return ""
-    return t if any(ord(c) > 0x7F for c in t) else ""
+    for tag, enc in (("sjis", "shift_jis"), ("euc", sbl.CODEC)):
+        try:
+            t = s.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        jp = sum(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF or 0x3000 <= ord(c) <= 0x303F
+                 or 0xFF01 <= ord(c) <= 0xFF5E for c in t)
+        if jp >= 2 and 2 * jp >= len(t.replace(" ", "")):
+            from exetext import hint_safe
+            return f"#{tag}: " + hint_safe(t.replace("\n", " ").replace("\r", " "))
+    return ""
+
+
+# The memory-card slot placeholder (USA SLUS_208.92). FUN_00238038 walks a menu string as the
+# print function would (a byte from 0x80 up steps two bytes, any other one, NUL ends it) and at the
+# first pair that is one of the three placeholders read gp-relative (82 4F at 0x69DA30, A3 B0 at
+# 0x69DA38, '##' at 0x69DA40), or a digit it stamped before (07 then a byte of '12' at 0x69DA48),
+# writes 07 and the slot's digit. FUN_002381a8 calls it on MainMenu 0x21F, 0x220, 0x224, 0x227 and
+# 0x22F, FUN_0023b210 on 0x22F. The USA MainMenu.txd writes the placeholder as A3 B0 ('£°').
+SLOT_PLACEHOLDERS = (b"\x82\x4f", b"\xa3\xb0", b"##")
+SLOT_STAMPED = (b"\x071", b"\x072")
+SLOT_MENU = "yosikawa\\mainmenu.txd"
+
+
+def slot_markers(s: bytes) -> List[int]:
+    """Offsets of the slot placeholders FUN_00238038 finds in ``s``, walking it as it does
+    (it stamps the first; the rest are counted by the same walk)."""
+    out, i, n = [], 0, len(s)
+    while i < n and s[i]:
+        if s[i:i + 2] in SLOT_PLACEHOLDERS or s[i:i + 2] in SLOT_STAMPED:
+            out.append(i)
+        i += 2 if s[i] >= 0x80 else 1
+    return out
+
+
+def slot_problem(old: bytes, new: bytes, show: Callable[[bytes], str]) -> Optional[str]:
+    """Why an edited menu string loses the memory-card slot placeholder of its original, or None."""
+    want = slot_markers(old)
+    if not want:
+        return None
+    got = slot_markers(new)
+    if len(got) == len(want):
+        return None
+    mark = show(old[want[0]:want[0] + 2])
+    hidden = [k for k in range(len(new) - 1) if new[k:k + 2] in SLOT_PLACEHOLDERS and k not in got]
+    if len(got) < len(want) and hidden:
+        k = hidden[0]
+        return (f"the slot placeholder {mark} is there, but the byte before it ({show(new[k - 1:k])}, 0x{new[k - 1]:02X}) "
+                f"is from 0x80 up, so FUN_00238038 reads it with the placeholder's first byte as one pair and never "
+                f"finds the placeholder: the game would not write the memory-card slot number. Put a space or "
+                f"another plain ASCII character right before {mark}")
+    return (f"the original holds {len(want)} memory-card slot placeholder(s) {mark}, the edit {len(got)}: the game "
+            f"writes the slot number over the first one (FUN_00238038), so keep {mark} where the number belongs, "
+            f"once")
+
+
+# The Skill Tutorial script (yosikawa\Tutorial.txd, read through FUN_0022d118). FUN_00215f10 runs an
+# entry by its first byte: '%' is a command chosen by the next byte(s) (%p, %tNN, %c+, %l0, ...),
+# '*' calls FUN_00215de8, an empty entry and one starting with '#' are skipped; any other entry is
+# the text the tutorial shows.
+TUTORIAL = "yosikawa\\tutorial.txd"
+
+
+def tutorial_role(s: bytes) -> str:
+    if not s:
+        return "empty"
+    return {0x25: "command", 0x2A: "command", 0x23: "skipped"}.get(s[0], "text")
+
+
+TUTORIAL_NOTE = {"command": "# tutorial command, not shown (FUN_00215f10 runs it); leave it as is",
+                 "empty": "# empty: the tutorial skips it (FUN_00215f10); leave it empty",
+                 "skipped": "# starts with '#': the tutorial skips it (FUN_00215f10); leave it as is"}
 
 
 class Kind:
@@ -344,13 +434,16 @@ class Bank(Kind):
         lines = [f"# {path}  chain{info['chain']}  {len(strings)} strings  "
                  f"stored {len(data)} bytes, slot {info['alloc']} bytes"
                  + (f", loader room {room} bytes (--grow)" if room is not None else "")]
+        banners = info.get("banners", {})
         for i, s in enumerate(strings):
             lines.append(f"### {i:04d}")
             t = ctx.codec.to_text(s)
-            if "⟦" in t:
-                hint = _sjis_hint(s)
-                if hint:
-                    lines.append("#sjis: " + hint.replace("\n", " "))
+            if i in banners:
+                lines.append("# battle banner (bat.namePut)" + (f"; the same name is in {banners[i]} banks: give every "
+                                                              f"copy the same text" if banners[i] > 1 else ""))
+            hint = _jp_hint(s) if ctx.build == "us" else ""
+            if hint:
+                lines.append(hint)
             lines.append(t)
         return "\n".join(lines) + "\n"
 
@@ -494,9 +587,27 @@ class Menu(Kind):
         strings, tail = txd_parse(data)
         if txd_build(strings, tail) != data or any(tail):
             raise TextError("does not rebuild to the same bytes; left alone")
+        low = path.lower().replace("/", "\\")
+        tutorial = low == TUTORIAL
+        slots = ctx.build == "us" and low == SLOT_MENU
         lines = [f"# {path}  {len(strings)} strings  (menu text; keep %p, %d and the game's codes)"]
+        if tutorial:
+            lines.append("# The Skill Tutorial's script: FUN_00215f10 runs the entries in order. An entry that starts "
+                         "with % or * is a command, an empty one or one starting with # is skipped, every other one "
+                         "is a page of text. Edit the text pages only; a page may not be emptied or start with % * #")
         for i, s in enumerate(strings):
-            lines += [f"### {i:04d}", ctx.codec.to_text(s)]
+            lines.append(f"### {i:04d}")
+            if tutorial and tutorial_role(s) != "text":
+                lines.append(TUTORIAL_NOTE[tutorial_role(s)])
+            if slots and slot_markers(s):
+                m = slot_markers(s)[0]
+                mark = ctx.codec.to_text(s[m:m + 2])
+                lines.append(f"# {mark} = the memory-card slot number, filled in by the game (FUN_00238038); keep it "
+                             f"as written, with a plain ASCII character (not an accented letter) right before it")
+            hint = _jp_hint(s) if ctx.build == "us" else ""
+            if hint:
+                lines.append(hint)
+            lines.append(ctx.codec.to_text(s))
         return "\n".join(lines) + "\n"
 
     def rebuild(self, ctx, path, data, text):
@@ -505,6 +616,24 @@ class Menu(Kind):
         new = [_encode(ctx, ctx.codec, k, o, b) for k, o, b in zip(keys, old, keyed_bodies(text, keys))]
         if new == old:
             return data
+        low = path.lower().replace("/", "\\")
+        for k, o, n in zip(keys, old, new):
+            if n == o:
+                continue
+            if low == TUTORIAL:
+                if tutorial_role(o) != "text":
+                    raise TextError(f"### {k}: this entry is not text: FUN_00215f10 runs it as a tutorial command "
+                                    f"({ctx.codec.to_text(o) or 'empty: skipped'}), so changing it changes what the "
+                                    f"Skill Tutorial does. Leave it as exported")
+                if tutorial_role(n) != "text":
+                    raise TextError(f"### {k}: a page of tutorial text may not "
+                                    + ("be emptied" if not n else f"start with '{chr(n[0])}'")
+                                    + ": FUN_00215f10 would " + ("skip it" if tutorial_role(n) != "command"
+                                                                 else "run it as a command") + " instead of showing it")
+            if ctx.build == "us" and low == SLOT_MENU:
+                why = slot_problem(o, n, ctx.codec.to_text)
+                if why:
+                    raise TextError(f"### {k}: {why}")
         blob = txd_build(new, tail)
         if txd_parse(blob) != (new, tail):
             raise TextError("the rebuilt menu file does not read back as written")
@@ -529,7 +658,14 @@ class Battle(Kind):
     def export(self, ctx, path, data, info):
         import smallfiles
         rows = smallfiles.batdat_raw_strings(data)
-        lines = [f"# {path}  {len(rows)} strings  (replaced in place: same length or shorter, never longer)"]
+        if ctx.build == "us":
+            room = _round(len(data), SECTOR) - len(data)
+            grow = ", ".join(str(si) for si in smallfiles.BATDAT_STRING_FIELDS)
+            lines = [f"# {path}  {len(rows)} strings. 'max N' is a string's own bytes. A string of sections {grow} "
+                     f"may be longer: the strings after it in its section move down (the file has {room} spare "
+                     f"bytes in its last sector). Section 17 is in place only"]
+        else:
+            lines = [f"# {path}  {len(rows)} strings  (replaced in place: same length or shorter, never longer)"]
         for si, o, raw in rows:
             lines += [f"### S{si:02d} @{o:#06x} max {len(raw)} bytes", ctx.codec.to_text(raw)]
         return "\n".join(lines) + "\n"
@@ -548,9 +684,16 @@ class Battle(Kind):
         if not new:
             return data
         try:
-            blob = smallfiles.batdat_replace(data, new)
+            blob = smallfiles.batdat_rebuild(data, new, grow=ctx.build == "us")
         except smallfiles.SmallFileError as e:
             raise TextError(str(e))
+        if len(blob) != len(data):                     # strings moved: the next export finds the same strings
+            if sorted((si, r) for si, _, r in smallfiles.batdat_raw_strings(blob)) != sorted(
+                    (si, b) for si, _, b in want):
+                raise TextError("the edit would change which strings the next export finds: a string that "
+                                "grows must keep its first byte printable, and the strings after it must still be "
+                                "found where they move to")
+            return blob
         if smallfiles.batdat_raw_strings(blob) != want:
             got = {(si, o) for si, o, _ in smallfiles.batdat_raw_strings(blob)}
             lost = [k for k, (si, o, _) in zip(keys, rows) if (si, o) not in got]
@@ -561,7 +704,20 @@ class Battle(Kind):
         return blob
 
     def limit(self, ctx, e, data, new, alloc, sizes, grow):
-        return None if len(new) == len(data) else "the battle database changed size"
+        """In place, or (USA) grown within the sectors the game reads: OV01 FUN_00a81a70 loads the file with
+        FUN_00a83dc0 -> FUN_0019c1e0, which reads the TOC size rounded up to whole sectors into the static
+        buffer at 0x61D040. The next address any decompiled code names after it is 0x631140, so the
+        buffer may well be larger, but its size was not read; the file keeps to its sectors."""
+        if len(new) == len(data):
+            return None
+        if ctx.build != "us":
+            return "the battle database changed size"
+        if _round(len(new), SECTOR) > _round(len(data), SECTOR) or len(new) > alloc:
+            return (f"the longer battle strings make the file {len(new)} bytes; it may hold "
+                    f"{min(_round(len(data), SECTOR), alloc)} ({len(new) - min(_round(len(data), SECTOR), alloc)} "
+                    f"over): the game reads whole sectors of the file into a static buffer whose size is not "
+                    f"known. Shorten other battle strings")
+        return None
 
 
 def quest_skeleton(text: str) -> Optional[str]:
@@ -582,9 +738,84 @@ def quest_skeleton(text: str) -> Optional[str]:
     return "".join(out)
 
 
+# The USA loaders (FUN_0022ee08 QuestMes, FUN_0022f000 Citizen, FUN_00232160 Treasure) read a fixed
+# number of records into a zeroed buffer of fixed-size records (0x195D8 = 36 x 0xB46, 0x29FE =
+# 50 x 0xD7, 0xBE2 = 18 x 0xA9) with FUN_0022ec18, which finds each field by name, then copies the
+# quoted text with no length check and no terminator of its own: a field holds its size minus one
+# byte, the rest is the zeroed buffer's NUL. In the copy, CR LF is skipped, \n is one byte (0x0A), \"
+# is a quote, any other backslash pair is dropped, a byte from 0x80 up takes two bytes (FUN_0023ebb8
+# converts the pair in place), and a lone LF is copied as a line break.
+QUEST_LAYOUTS = {
+    "iwase\\questmes.txt": (0x24, 0xB46, (("Subject", 0x000), ("Locate", 0x01F), ("Client", 0x030),
+                                         ("MesIPG", 0x041), ("MesSCD", 0x142), ("MesFLD", 0x243),
+                                         ("UkunSCD", 0x344), ("UkunFLD", 0x745))),
+    "iwase\\citizen.txt": (50, 0xD7, (("Name", 0x00), ("Sex", 0x11), ("Age", 0x18), ("Hobby", 0x29),
+                                      ("Profile", 0x40))),
+    "iwase\\treasure.txt": (0x12, 0xA9, (("Item", 0x00), ("Locate", 0x15), ("Expl", 0x30))),
+}
+
+
+def _quest_name_match(pat: bytes, d: bytes, p: int) -> bool:
+    """FUN_0024f480: the pattern ('Name:%s\\n') matches when the text agrees up to its '%'."""
+    i, n = 0, len(d)
+    while True:
+        c2 = pat[i]
+        if c2 == 0x0A:
+            return p < n and d[p] == 0x0A
+        if p >= n or d[p] != c2:
+            return c2 == 0x25
+        p += 1
+        i += 1
+
+
+def quest_fields(data: bytes, layout) -> List[Tuple[int, str, int, int]]:
+    """(record, field, bytes the game copies, field size) for every field the loader reads,
+    walking the file as FUN_0022ec18 does. TextError when a field cannot be found."""
+    nrec, rsize, fields = layout
+    out, p, n = [], 0, len(data)
+    for r in range(nrec):
+        for k, (name, off) in enumerate(fields):
+            size = (fields[k + 1][1] if k + 1 < len(fields) else rsize) - off
+            pat = (name + ":%s\n").encode()
+            while True:
+                while p < n and data[p] != pat[0]:
+                    p += 1
+                if p >= n:
+                    raise TextError(f"record {r + 1}: the game would not find its field {name}: and read past "
+                                    f"the end of the file")
+                if _quest_name_match(pat, data, p):
+                    break
+                p += 1
+            while p < n and data[p] != 0x22:
+                p += 1
+            p += 1
+            length = 0
+            while True:
+                if p >= n:
+                    raise TextError(f"record {r + 1} {name}: the text has no closing quote")
+                c = data[p]
+                if c == 0x22:
+                    p += 1
+                    break
+                if c == 0x0D and p + 1 < n and data[p + 1] == 0x0A:
+                    p += 2
+                elif c == 0x5C:
+                    length += p + 1 < n and data[p + 1] in (0x22, 0x6E)
+                    p += 2
+                elif c < 0x80:
+                    length += 1
+                    p += 1
+                else:
+                    length += 2
+                    p += 2
+            out.append((r, name, length, size))
+    return out
+
+
 class Quest(Kind):
     name = "quest"
-    why_fixed = "its loader allocates by the file's size, but a larger file has not been tried"
+    why_fixed = ("its loader allocates by the file's size from the game's heap, whose room has not been read; "
+                 "each text also has a fixed field size")
 
     def match(self, low, head):
         low = low.replace("/", "\\")
@@ -593,14 +824,39 @@ class Quest(Kind):
     def tree_path(self, root, chain, path):
         return _tree(root, chain, path).with_suffix(".sjis.txt")
 
+    @staticmethod
+    def _layout(path):
+        return QUEST_LAYOUTS.get(path.lower().replace("/", "\\"))
+
+    def _codec(self, ctx, path):
+        """USA: the three files its loaders read, as the game draws them (UsQuestCodec); every other
+        quest file (Japan, and the USA build's unloaded Japanese placeholders) as plain Shift-JIS."""
+        return ctx.usquest if ctx.build == "us" and self._layout(path) is not None else ctx.sjis
+
     def export(self, ctx, path, data, info):
-        return ctx.sjis.to_text(data, file=True)
+        return self._codec(ctx, path).to_text(data, file=True)
 
     def rebuild(self, ctx, path, data, text):
-        old_text = ctx.sjis.to_text(data, file=True)
+        codec = self._codec(ctx, path)
+        old_text = codec.to_text(data, file=True)
         if text == old_text:
             return data
-        new = ctx.sjis.from_text(text)
+        if "\r\n" in old_text and "\r" not in text and "\n" in text:
+            # an editor saved the file with LF line ends: the game skips CR LF inside a text but copies
+            # a lone LF as a line break, so the file's own CR LF are restored, every line alike
+            text = text.replace("\n", "\r\n")
+        elif "\r\n" in old_text and text.replace("\r\n", "").count("\n"):
+            raise TextError("the file mixes CR LF and LF line ends: keep CR LF line ends, as exported (the game "
+                            "skips CR LF inside a text and copies a lone LF as a line break)")
+        try:
+            new = codec.from_text(text)
+        except TextError as e:
+            for n, ln in enumerate(text.split("\n"), 1):
+                try:
+                    codec.from_text(ln)
+                except TextError as e2:
+                    raise TextError(f"line {n}: {e2}")
+            raise e
         if new == data:
             return data
         if b"\x00" in new:
@@ -611,12 +867,31 @@ class Quest(Kind):
                             "(record numbers, braces, field names and every line outside the quotes must stay; "
                             "a quote inside a text is written \\\")")
         if ctx.build == "us":
+            layout = self._layout(path)
             old_lines = set(old_text.split("\n"))
             for n, ln in enumerate(text.split("\n"), 1):
-                if ln not in old_lines and any(ch and ord(ch) > 0x7F for ch, _ in textcodec.tokens(ln)):
-                    raise TextError(f"line {n}: a non-ASCII character in a USA quest file. How the USA build "
-                                    f"reads bytes above 0x7F in these files has not been read; write plain "
-                                    f"ASCII, or ⟦XX⟧ escapes if you know the bytes")
+                if ln in old_lines:
+                    continue
+                typed = [ch for ch, _ in textcodec.tokens(ln) if ch and ord(ch) > 0x7F]
+                if typed and layout is None:
+                    raise TextError(f"line {n}: a non-ASCII character in a quest file no USA loader reads (the "
+                                    f"loaders read QuestMes.txt, Citizen.txt and Treasure.txt), so what the game "
+                                    f"would make of it is not known; write plain ASCII, or \u27e6XX\u27e7 escapes "
+                                    f"if you know the bytes")
+                for ch in typed:
+                    why = codec.typed_problem(ch)
+                    if why is None:      # a symbol pair: its glyph in the USA font, as in any other text
+                        why = ctx.check_typed(ctx.codec, codec.drawn(codec.encode_char(ch)))
+                    if why:
+                        raise TextError(f"line {n}: {why}")
+            if layout is not None:
+                old_f = quest_fields(data, layout)
+                for (r, name, length, size), (_, _, was, _) in zip(quest_fields(new, layout), old_f):
+                    if length > size - 1 and length != was:
+                        raise TextError(f"record {r + 1} {name}: {length} bytes, but the game copies it into a "
+                                        f"{size}-byte field (at most {size - 1} and the terminator; \\n counts one "
+                                        f"byte, the line ends inside the quotes none); shorten it by "
+                                        f"{length - size + 1}")
         else:
             # the file is Shift-JIS; the glyph check assumes the game maps each character to its JIS code
             why = ctx.check_lines(textcodec.EucCodec(), old_text, text)
@@ -660,7 +935,242 @@ class Subtitle(Kind):
         return None
 
 
-KINDS: Tuple[Kind, ...] = (Bank(), Inline(), Menu(), Battle(), Quest(), Subtitle())
+ICON_TITLE_AT, ICON_TITLE_LEN = 0xC0, 68          # icon.sys: the title field, Shift-JIS, NUL-padded
+ICON_BREAK_AT = 6                                 # icon.sys: u16, the byte offset where line 2 starts
+# FUN_0019dc10 (USA), called from FUN_00239f98 at 0x0023A8C4 with the loaded carddata.bin, the slot
+# number + 1 and the save time, writes these bytes of the title when it saves (offsets in the
+# title; the buffer has the pack's 0x40-byte table first, icon.sys at 0x40): the trail bytes of
+# the slot digits (+0x1B, +0x1D), the hour's tens as a whole pair (+0x20/+0x21: 81 40 or 82 4F+d),
+# the trail bytes of the hour's ones and the minutes (+0x23, +0x27, +0x29). The leads before
+# them stay as loaded, so the whole pairs +0x1A..+0x1D, +0x20..+0x23 and +0x26..+0x29 are kept.
+ICON_STAMPED = tuple(range(0x1A, 0x1E)) + tuple(range(0x20, 0x24)) + tuple(range(0x26, 0x2A))
+
+
+class IconTitle(Kind):
+    """The save's title in the PS2 memory-card browser: ``icon.sys`` (member 0 of
+    carddata.bin; Japan carddata.new), Shift-JIS at +0xC0, two lines split at the u16 byte
+    offset at +6. Rewritten in place: the pack keeps its size."""
+    name = "icontitle"
+    why_fixed = "the pack is rewritten in place"
+
+    def match(self, low, head):
+        return low in ("carddata.bin", "carddata.new")
+
+    def tree_path(self, root, chain, path):
+        p = _tree(root, chain, path)
+        return p.with_name(p.name + ".title.txt")
+
+    def count(self, ctx, data):
+        return 1
+
+    @staticmethod
+    def _sys(data: bytes) -> Tuple[int, bytes]:
+        import smallfiles
+        try:
+            start, end = smallfiles.pack_members(data)[0]
+        except smallfiles.SmallFileError as e:
+            raise TextError(f"not a pack: {e}")
+        sys_ = data[start:end]
+        if sys_[:4] != b"PS2D" or len(sys_) < ICON_TITLE_AT + ICON_TITLE_LEN:
+            raise TextError("member 0 is not an icon.sys")
+        return start, sys_
+
+    def _lines(self, ctx, sys_: bytes) -> Tuple[bytes, int]:
+        field = sys_[ICON_TITLE_AT:ICON_TITLE_AT + ICON_TITLE_LEN]
+        title = field.split(b"\0")[0]
+        if any(field[len(title):]):
+            raise TextError("bytes after the title's terminator; left alone")
+        brk = struct.unpack_from("<H", sys_, ICON_BREAK_AT)[0]
+        if not 0 < brk <= len(title):
+            raise TextError(f"the line-break offset {brk} is outside the title")
+        return title, brk
+
+    def _show(self, ctx, title: bytes, brk: int) -> str:
+        a, b = ctx.sjis.to_text(title[:brk]), ctx.sjis.to_text(title[brk:])
+        if ctx.sjis.from_text(a) != title[:brk]:
+            raise TextError("the line break falls inside a character; left alone")
+        return a + "\\n" + b
+
+    def export(self, ctx, path, data, info):
+        _, sys_ = self._sys(data)
+        title, brk = self._lines(ctx, sys_)
+        shown = self._show(ctx, title, brk)
+        return "\n".join([
+            f"# {path}  the save's title in the PS2 memory-card browser (icon.sys, Shift-JIS)",
+            f"# Two lines, split where \\n stands. At most {ICON_TITLE_LEN - 1} bytes in all (2 per full-width "
+            f"character, 1 per half-width).",
+            "# The game writes the save slot and time into the title when it saves (FUN_0019dc10): keep the "
+            "characters at bytes",
+            "# 26-29 (the slot, '\uff10\uff10'), 32-35 and 38-41 (the time) where they are, so the text before them "
+            "must stay 26 bytes",
+            "# (13 full-width characters, as exported).",
+            "### title", shown]) + "\n"
+
+    def rebuild(self, ctx, path, data, text):
+        start, sys_ = self._sys(data)
+        title, brk = self._lines(ctx, sys_)
+        (body,) = keyed_bodies(text, ["title"])
+        if body == self._show(ctx, title, brk):
+            return data
+        parts = body.split("\\n")
+        if len(parts) != 2:
+            raise TextError(f"### title: write exactly one \\n (the line break of the memory-card browser); "
+                            f"found {len(parts) - 1}")
+        if "\\" in body.replace("\\n", ""):
+            raise TextError("### title: a backslash other than the \\n line break")
+        try:
+            a, b = ctx.sjis.from_text(parts[0]), ctx.sjis.from_text(parts[1])
+        except TextError as e:
+            raise TextError(f"### title: {e}")
+        new = a + b
+        if b"\0" in new:
+            raise TextError("### title: a NUL byte (\u27e600\u27e7) inside the title")
+        if len(new) > ICON_TITLE_LEN - 1:
+            raise TextError(f"### title: {len(new)} bytes, but the field holds {ICON_TITLE_LEN - 1} and its "
+                            f"terminator; shorten it by {len(new) - ICON_TITLE_LEN + 1}")
+        if not a:
+            raise TextError("### title: the first line is empty")
+        if ctx.build != "us":
+            raise TextError("### title: the save writer was read in the USA executable only (FUN_0019dc10); "
+                            "on this build which bytes it stamps has not been read")
+        moved = [k for k in ICON_STAMPED if k >= len(new) or new[k] != title[k]]
+        if moved:
+            raise TextError(f"### title: the game writes the slot and time into bytes {ICON_STAMPED[0]}-"
+                            f"{ICON_STAMPED[3]}, {ICON_STAMPED[4]}-{ICON_STAMPED[7]} and {ICON_STAMPED[8]}-"
+                            f"{ICON_STAMPED[11]} of the title when it saves; the edit changes or moves what sits "
+                            f"there (byte {moved[0]}). Keep the text before them 26 bytes and those characters "
+                            f"as exported")
+        blob = bytearray(data)
+        o = start + ICON_TITLE_AT
+        blob[o:o + ICON_TITLE_LEN] = new + bytes(ICON_TITLE_LEN - len(new))
+        struct.pack_into("<H", blob, start + ICON_BREAK_AT, len(a))
+        out = bytes(blob)
+        import smallfiles
+        if smallfiles.build_pack(smallfiles.unpack_pack(out)) != out:
+            raise TextError("the rewritten pack does not rebuild to itself")
+        _, sys2 = self._sys(out)
+        if self._lines(ctx, sys2) != (new, len(a)):
+            raise TextError("the rewritten title does not read back as written")
+        return out
+
+    def limit(self, ctx, e, data, new, alloc, sizes, grow):
+        return None if len(new) == len(data) else "the memory-card pack changed size"
+
+
+KINDS: Tuple[Kind, ...] = (Bank(), Inline(), Menu(), Battle(), Quest(), Subtitle(), IconTitle())
+
+
+# ------------------------------------------------------------- battle banners
+
+BANNER = "bat.namePut"
+
+
+def banner_uses(iso_path: str) -> List[Tuple[int, str, int, bytes]]:
+    """(chain, bank path, .sbl index, original bytes) of every string a script passes to
+    ``bat.namePut`` (the battle banners: OV01 FUN_00aa1330 resolves the 4th argument with
+    FUN_00a9f238 and calls FUN_002355d8). Empty on a build without string banks."""
+    import dialogue
+    return dialogue.native_text_uses(dialogue.Disc([iso_path]), (BANNER,))[BANNER]
+
+
+def banner_overrun(s: bytes) -> bool:
+    """True when FUN_002353b8, which measures a banner, would step over the string's terminator:
+    it takes every byte from 0x80 up together with the next byte, so a one-byte Latin-1 letter
+    right before the end pairs with the NUL and the walk reads on past the string."""
+    i, n = 0, len(s)
+    while i < n:
+        if s[i] >= 0x80:
+            if i + 1 >= n:
+                return True
+            i += 2
+        else:
+            i += 1
+    return False
+
+
+def banner_width(measure: Callable[[bytes], int], s: bytes) -> int:
+    """The banner box's width as FUN_002355d8 sizes it: FUN_002353b8(text) + 0x18. FUN_002353b8
+    starts at zoom 16, skips a $code to its ';' ($init sets zoom 16, $zoomN; and $zoomNN; set N),
+    ignores bytes below 0x20 and adds, for every character (a byte from 0x80 up with the next
+    byte, any other byte alone), the width function's value for it times zoom / 16.
+    ``measure(piece)`` stands in for that width function (FUN_00195938, which it calls with the
+    piece after the codes 19 03; those codes' state is not modelled, so this is an estimate)."""
+    zoom, w, i, n, skip = 16, 0, 0, len(s), False
+    while i < n and s[i]:
+        b = s[i]
+        if b >= 0x80:
+            w += measure(s[i:i + 2]) * zoom >> 4
+            i += 2
+            continue
+        if skip:
+            skip = b != 0x3B
+        elif b == 0x24:
+            skip = True
+            if s[i + 1:i + 5] == b"init":
+                zoom = 16
+            elif s[i + 1:i + 5] == b"zoom":
+                d5 = s[i + 5] if i + 5 < n else 0
+                d6 = s[i + 6] if i + 6 < n else 0
+                zoom = d5 - 0x30 if d6 in (0x2C, 0x3B, 0) else d5 * 10 + d6 - 0x210
+        elif b > 0x1F:
+            w += measure(bytes((b,))) * zoom >> 4
+        i += 1
+    return w + 0x18
+
+
+def banner_report(ctx: Context, uses, banks: Dict[Tuple[int, str], Tuple[List[bytes], List[bytes]]],
+                  problems: List[str], notes: List[str]) -> set:
+    """Battle banners after an import is planned. ``banks`` maps (chain, lower-case bank path) to
+    (original strings, new strings). A refusal for a banner whose width walk would run off its end;
+    a note (not a refusal) for a name whose copies in different banks were not edited alike, and
+    for a banner wider than any the retail disc shows (the width has no clamp in FUN_002355d8).
+    Returns the (chain, bank path) of the banks refused."""
+    copies: Dict[bytes, Dict[Tuple[int, str, int], bytes]] = {}
+    for chain, path, idx, orig in uses:
+        pair = banks.get((chain, path.lower()))
+        if pair is None or idx >= len(pair[1]):
+            continue
+        copies.setdefault(orig, {})[(chain, path, idx)] = pair[1][idx]
+    changed = {(o, k): n for o, cs in copies.items() for k, n in cs.items() if n != o}
+    refused = set()
+    if not changed:
+        return refused
+    for (o, (chain, path, idx)), n in sorted(changed.items(), key=lambda kv: kv[0][1]):
+        if banner_overrun(n):
+            refused.add((chain, path))
+            problems.append(f"{path}: ### {idx:04d} is a battle banner (bat.namePut) and ends with a one-byte "
+                            f"letter from 0x80 up ({ctx.codec.to_text(n[-1:])}): FUN_002353b8, which measures the "
+                            f"banner, takes such a byte with the next one and would step over the terminator. End "
+                            f"the banner with a plain ASCII character")
+    for o, cs in sorted(copies.items()):
+        texts = set(cs.values())
+        if len(cs) > 1 and len(texts) > 1:
+            groups: Dict[bytes, List[str]] = {}
+            for (chain, path, idx), n in sorted(cs.items()):
+                groups.setdefault(n, []).append(f"{path.rsplit(chr(92), 1)[-1]} #{idx:04d}")
+            desc = "; ".join(("unchanged" if n == o else repr(ctx.codec.to_text(n))) + f" in {len(where)} "
+                             f"({', '.join(where[:3])}{', ...' if len(where) > 3 else ''})"
+                             for n, where in groups.items())
+            notes.append(f"the battle banner {ctx.codec.to_text(o)!r} has {len(cs)} copies that now differ: "
+                         f"{desc}. Each copy is shown by its own scene's battles; give them the same text unless "
+                         f"you mean otherwise")
+    try:
+        adr, fonts = ctx.addressing()
+        metrics = next(iter(fonts.values())).metrics
+
+        def measure(piece: bytes) -> int:
+            return adr.measurer(metrics, han=True, prop=True).width(piece)
+        widest = max((banner_width(measure, o), o) for o in copies)
+        for (o, (chain, path, idx)), n in sorted(changed.items(), key=lambda kv: kv[0][1]):
+            w = banner_width(measure, n)
+            if w > widest[0]:
+                notes.append(f"{path}: ### {idx:04d}, the battle banner {ctx.codec.to_text(n)!r}, is about {w} "
+                             f"pixels wide by the font's metrics, wider than any banner of this disc ({widest[0]}, "
+                             f"{ctx.codec.to_text(widest[1])!r}). FUN_002355d8 sizes the box to the text with no "
+                             f"limit; the screen's limit was not read, so check it in the game")
+    except (TextError, ValueError) as e:
+        notes.append(f"the widths of edited battle banners were not estimated: {e}")
+    return refused
 
 
 def _objects(iso: IsoImage):
@@ -674,7 +1184,7 @@ def _objects(iso: IsoImage):
         sizes = {e.path.lower(): e.size for e in entries}
         for e in entries:
             low = e.path.lower()
-            if not low.endswith((".sbl", ".sb", ".bin", ".txd", ".us", ".txt")):
+            if not low.endswith((".sbl", ".sb", ".bin", ".txd", ".us", ".txt", ".new")):
                 continue
             head = reader.read(e.byte_offset, min(4, e.size))
             kind = next((k for k in KINDS if k.match(low, head)), None)
@@ -714,8 +1224,16 @@ def export_text(iso_path: str, out_dir: str) -> int:
     done: Dict[str, List[int]] = {}
     written: Dict[Path, str] = {}
     kept: List[str] = []
+    banners: Dict[Tuple[int, str], Dict[int, int]] = {}
+    if ctx.build == "us":
+        uses = banner_uses(iso_path)
+        spread: Dict[bytes, set] = {}
+        for chain, path, idx, orig in uses:
+            spread.setdefault(orig, set()).add((chain, path.lower()))
+        for chain, path, idx, orig in uses:
+            banners.setdefault((chain, path.lower()), {})[idx] = len(spread[orig])
     for chain, e, kind, stored, data, alloc, sizes in _objects(iso):
-        info = {"chain": chain, "alloc": alloc, "sizes": sizes}
+        info = {"chain": chain, "alloc": alloc, "sizes": sizes, "banners": banners.get((chain, e.path.lower()), {})}
         try:
             text = kind.export(ctx, e.path, data, info)
             if not text:
@@ -763,10 +1281,13 @@ def export_text(iso_path: str, out_dir: str) -> int:
 
 # --------------------------------------------------------------------- import
 
-def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool = False
-                ) -> Tuple[Dict[Tuple[int, str], bytes], List[str]]:
+def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool = False,
+                notes: Optional[List[str]] = None) -> Tuple[Dict[Tuple[int, str], bytes], List[str]]:
     """({(chain, path): new bytes}, problems). Raises region.UnknownBuild for a disc
-    the kit does not know. With any problem, nothing should be written."""
+    the kit does not know. With any problem, nothing should be written. ``notes`` collects
+    remarks that do not stop the import (battle banners edited unalike, wide banners)."""
+    notes = [] if notes is None else notes
+    banks: Dict[Tuple[int, str], Tuple[List[bytes], List[bytes]]] = {}
     iso = IsoImage(iso_path)
     ctx = Context(iso, need_executable=True)
     root = Path(text_dir)
@@ -811,6 +1332,9 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
         except TextError as ex:
             problems.append(f"{e.path}: {ex}")
             continue
+        if kind.name == "bank":
+            old_s = sbl.parse(data)
+            banks[(chain, e.path.lower())] = (old_s, old_s if new == data else sbl.parse(new))
         if new == data:
             continue
         if e.compressed:
@@ -821,6 +1345,10 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
             problems.append(f"{e.path}: {why}")
             continue
         changed[(chain, e.path)] = new
+    problems += _new_subtitle_files(root, matched, available_chains(iso), manifest)
+    if any(o != n for o, n in banks.values()):
+        for key in banner_report(ctx, banner_uses(iso_path), banks, problems, notes):
+            changed.pop(key, None)
     iso.close()
     if manifest is not None:
         absent = sorted(k for k in manifest.get("objects", {}) if k not in matched and (root / k).exists())
@@ -830,6 +1358,30 @@ def plan_import(iso_path: str, text_dir: str, grow: bool = False, rebase: bool =
     return changed, problems
 
 
+def _new_subtitle_files(root: Path, matched, chains, manifest) -> List[str]:
+    """A subtitle file in the tree for a movie that has none on this disc (s020310 and four others) is
+    refused: the movie player FUN_001e7d08 reads <movie>.txt through the TOC into the start of the block
+    it allocates for the video decoder, and starts the decoder's work area right after the cues, at
+    align64 of their length; when the file is missing (FUN_0019c1e0 returns -1) that length is 0 and the
+    work area starts at the block's start. The block is sized for the decoder alone (an overrun of 64
+    bytes broke playback in the running game, docs/MODDING.md), so such a movie has no room for cues."""
+    out = []
+    objects = (manifest or {}).get("objects", {})
+    for f in sorted(root.glob("chain*/**/*.sub.txt")):
+        rel = _rel(root, f)
+        try:
+            chain = int(rel.split("/", 1)[0][5:])
+        except ValueError:
+            continue
+        if rel in matched or rel in objects or chain not in chains:
+            continue
+        out.append(f"{rel}: this disc has no subtitle file for that movie, and text-import does not add one. The "
+                   f"movie player keeps a movie's cues at the start of the video decoder's memory block and starts "
+                   f"the decoder right after them; with no subtitle file there is no room for any cue "
+                   f"(FUN_001e7d08, docs/DIALOGUE.md)")
+    return out
+
+
 def import_text(iso_path: str, text_dir: str, out_iso: str, grow: bool = False, rebase: bool = False) -> int:
     from repack import RepackError, patch_copy, same_file
 
@@ -837,11 +1389,14 @@ def import_text(iso_path: str, text_dir: str, out_iso: str, grow: bool = False, 
         print(f"refused: --out {out_iso} is the input image itself; the kit never patches its source. "
               f"Give another file name", file=sys.stderr)
         return 1
+    notes: List[str] = []
     try:
-        changed, problems = plan_import(iso_path, text_dir, grow=grow, rebase=rebase)
+        changed, problems = plan_import(iso_path, text_dir, grow=grow, rebase=rebase, notes=notes)
     except region.UnknownBuild as e:
         print(f"refused: {e}", file=sys.stderr)
         return 1
+    for n in notes:
+        print("note: " + n, file=sys.stderr)
     for p in problems:
         print("refused: " + p, file=sys.stderr)
     if problems:
@@ -939,20 +1494,58 @@ def self_test() -> int:
     elf_us = minidisc.synthetic_executable("us")
     scene = [b"[A]One.", b"#1 starts with a hash", b"<\xa2\xa2> Caf\xe9 \xa4\xa5", b"", b"### 0001"]
     subs = (b";" + b"-" * 60 + b"\n0\t$ay390;\n00:01:00\tHello there\n00:02:00\tTwo\\nlines of it\n00:03:00\t\nend\n")
-    pool = b"Medica\x00One ally\x00Revert\x00"
-    sec0 = struct.pack("<4H", 16, 23, 7, 0) + struct.pack("<4H", 32, 23, 16, 23) + pool
-    bd = struct.pack("<III", 1, 12 + len(sec0), 12) + sec0
+    # the battle database with the retail numbering: 19 sections, the text in section 6 (12-byte records,
+    # name +0 and description +2 read by OV01 FUN_00a9b750; +4 and +6 are numbers equal to string offsets)
+    pool = b"Medica\x00One ally\x00Revert\x00\x00"
+    sec6 = struct.pack("<6H", 24, 31, 7, 0, 0, 0) + struct.pack("<6H", 40, 31, 24, 31, 0, 0) + pool
+    bsecs = [struct.pack("<4H", 1, 2, 3, 4)] * 19
+    bsecs[6] = sec6
+    boffs = [84 + sum(len(x) for x in bsecs[:i]) for i in range(19)]
+    bd = struct.pack("<II", 19, 84 + sum(len(x) for x in bsecs)) + struct.pack("<19I", *boffs) + b"".join(bsecs)
     quest = "No.1\r\n{\r\n\tName:\"Sikes\"\r\n}\r\n".encode("shift_jis")
+    treasure = "".join(f"No.{i + 1}\r\n{{\r\n\tItem:\"Potion\"\r\n\tLocate:\"Here\"\r\n\tExpl:\"Heals\\nyou.\"\r\n}}\r\n"
+                       for i in range(18)).encode("ascii")
+    treasure = treasure.replace(b'Locate:"Here"', b'Locate:"\x83\xb6 System"', 1)     # the retail pair (Omega)
+    # MainMenu.txd: entries 0218 and 0543 with their retail bytes (the slot placeholder A3 B0), one without it,
+    # the EUC developer note of entry 0318
+    slot218 = (b"Checking memory card (8MB) (for PlayStation\xa4\xa52) in\\nMEMORY CARD slot \xa3\xb0.")
+    slot543 = (b"No memory card (8MB) (for PlayStation\xa4\xa52) found\\nin MEMORY CARD slot \xa3\xb0.")
+    note318 = "↑予備ではなく、空欄で　コンディション予備".encode(sbl.CODEC)
+    mainmenu = [b"Saving...", slot218, slot543, note318]
+    # Tutorial.txd: the first entries of the retail Skill Tutorial
+    tutorial = [b"Skill Tutorial", b"%p", b"*", b"You can customize the abilities of your characters", b"%t45", b"",
+                b"%c+"]
+    # two map scripts whose banks share a battle banner (bat.namePut, 4th of 5 arguments) and a test line
+    def op(o, v=None):
+        return struct.pack("<H", o) if v is None else struct.pack("<HHH", o, v & 0xFFFF, (v >> 16) & 0xFFFF)
+    name_put = (op(0x04, 1) + op(0x28) + op(0x04, 2) + op(0x28) + op(0x04, 3) + op(0x28) + op(0x06, 0x200001)
+                + op(0x2A) + op(0x04, 5) + op(0x28) + op(0x04, 5) + op(0x15, 0) + op(0x19) + op(0x13))
+    import sb as _sb
+    map_script = _sb.build_script(name_put, [("bat", "namePut")]).ljust(70004, b"\x00")
+    euc_line = "11テストメッセージ\\n表示中".encode(sbl.CODEC)
+    title = "ＸｅｎｏｓａｇａＥＰＩＩ−００［００：００］".encode("shift_jis")
+    icon_sys = bytearray(964)
+    icon_sys[:4] = b"PS2D"
+    struct.pack_into("<H", icon_sys, ICON_BREAK_AT, 30)
+    icon_sys[ICON_TITLE_AT:ICON_TITLE_AT + len(title)] = title
+    import smallfiles
+    carddata = smallfiles.build_pack([bytes(icon_sys), b"\x00\x00\x01\x00" + bytes(200)])
     files = {
         "font0.us": font_us, "font1.us": font_us,
         "cf\\sc0001.sb": b"\x00" * 3000,                           # not parsed: only its size matters here
         "cf\\en\\sc0001.sbl": sbl.build(scene),
-        "model\\map\\X.bin": b"\x00" * 70004,
-        "model\\map\\en\\X.sbl": sbl.build([b"map line"]),
+        "model\\map\\X.bin": map_script,
+        "model\\map\\en\\X.sbl": sbl.build([b"map line", b"$zoom13;Medica", euc_line]),
+        "model\\map\\Y.bin": map_script,
+        "model\\map\\en\\Y.sbl": sbl.build([b"other map", b"$zoom13;Medica"]),
+        "yosikawa\\MainMenu.txd": txd_build(mainmenu),
+        "yosikawa\\Tutorial.txd": txd_build(tutorial),
         "other\\en\\odd.sbl": sbl.build([b"odd"]),
         "yosikawa\\Menu.txd": txd_build(menu),
         "movie\\en\\s0.txt": subs,
         "iwase\\Quest.txt": quest,
+        "iwase\\Treasure.txt": treasure,
+        "carddata.bin": carddata,
         "yamamoto\\batdat.us": bd,
         "zz\\end.bin": b"E" * 100,
     }
@@ -969,10 +1562,12 @@ def self_test() -> int:
 
         fresh()
         names = sorted(p.name for p in tree.rglob("*.txt"))
-        check(names == ["Menu.txd.txt", "Quest.sjis.txt", "X.sbl.txt", "batdat.us.txt", "odd.sbl.txt", "s0.sub.txt", "sc0001.sbl.txt"],
+        check(names == ["MainMenu.txd.txt", "Menu.txd.txt", "Quest.sjis.txt", "Treasure.sjis.txt", "Tutorial.txd.txt",
+                         "X.sbl.txt", "Y.sbl.txt", "batdat.us.txt", "carddata.bin.title.txt", "odd.sbl.txt",
+                         "s0.sub.txt", "sc0001.sbl.txt"],
               "one tree file per text object, by kind")
         man = json.loads((tree / MANIFEST).read_text(encoding="utf-8"))
-        check(man["build"] == "us" and man["serials"] == ["SLUS_208.92"] and len(man["objects"]) == 7
+        check(man["build"] == "us" and man["serials"] == ["SLUS_208.92"] and len(man["objects"]) == 12
               and man["objects"]["chain0/cf/en/sc0001.sbl.txt"]["sha1"] == hashlib.sha1(files["cf\\en\\sc0001.sbl"]).hexdigest(),
               "the manifest records the build and each object's sha1")
         check(plan(iso, tree) == ({}, []), "an unedited export imports as no change")
@@ -1087,18 +1682,34 @@ def self_test() -> int:
         _edit(bt, "One ally", "One")
         ch, pr = plan(iso, tree)
         check(not pr and ch[(0, "yamamoto\\batdat.us")] == bd.replace(b"One ally", b"One\x00\x00\x00\x00\x00"), "a battle string is shortened in place")
+        fresh()
         _edit(bt, "Medica", "Medica+")
-        check(refused(iso, tree, "may not get longer"), "a longer battle string is refused")
+        ch, pr = plan(iso, tree)
+        import smallfiles
+        got = ch.get((0, "yamamoto\\batdat.us"))
+        check(not pr and got is not None and len(got) > len(bd)
+              and [r for _, _, r in smallfiles.batdat_raw_strings(got)] == [b"Medica+", b"One ally", b"Revert"]
+              and smallfiles.batdat_field_texts(got)[(6, 1, 0)] == b"Revert",
+              "a longer battle string (USA) grows: the strings after it in its section move down")
+        fresh()
+        _edit(bt, "Medica", "M" * 3000)
+        check(refused(iso, tree, "Shorten other battle strings"), "a battle database past its sectors is refused")
         fresh()
         _edit(bt, "Medica", "⟦01⟧edica")
         check(refused(iso, tree, "disappear"), "a battle edit that would hide a section from the next export is refused")
         fresh()
         t = bt.read_text(encoding="utf-8")
-        a, b = t.index("### S00 @0x0010"), t.index("### S00 @0x0017")
+        a, b = t.index("### S06 @0x0018"), t.index("### S06 @0x001f")
         bt.write_text(t[:b] + t[a:b] + t[b:], encoding="utf-8")
         check(refused(iso, tree, "twice"), "a battle block given twice is refused")
         bt.write_text(t[:a] + t[b:], encoding="utf-8")
         check(refused(iso, tree, "missing"), "a missing battle block is refused")
+        # a subtitle file for a movie that has none on the disc
+        fresh()
+        extra = tree / "chain0" / "movie" / "en" / "s020310.sub.txt"
+        extra.write_text("00:01:00 Hello.\n00:03:00\nend\n", encoding="utf-8")
+        check(refused(iso, tree, "does not add one"), "a subtitle file for a movie with none on the disc is refused")
+        extra.unlink()
         # quest text
         fresh()
         q = Quest().tree_path(tree, 0, "iwase\\Quest.txt")
@@ -1109,7 +1720,153 @@ def self_test() -> int:
         check(refused(iso, tree, "structure changed"), "a quest file's structure outside the quotes may not change")
         fresh()
         _edit(q, "Sikes", "Ｓikes")
-        check(refused(iso, tree, "non-ASCII"), "USA quest text: a typed non-ASCII character is refused (reader not read)")
+        check(refused(iso, tree, "no USA loader reads"), "USA: a typed non-ASCII character in a quest file no USA "
+                                                         "loader reads is refused")
+        fresh()
+        with open(q, encoding="utf-8", newline="") as fh:
+            qt = fh.read()
+        with open(q, "w", encoding="utf-8", newline="") as fh:       # an editor that writes LF line ends
+            fh.write(qt.replace("Sikes", "Sykes").replace("\r\n", "\n"))
+        ch, pr = plan(iso, tree)
+        check(not pr and ch[(0, "iwase\\Quest.txt")] == quest.replace(b"Sikes", b"Sykes"),
+              "a quest file saved with LF line ends gets its CR LF back (a lone LF would be a line break in game)")
+        with open(q, "w", encoding="utf-8", newline="") as fh:
+            fh.write(qt.replace("\r\n", "\n", 1))
+        check(refused(iso, tree, "keep CR LF"), "mixed CR LF and LF line ends are refused, saying to keep CR LF")
+        # the field sizes of the USA loaders (Treasure: Item 21, Locate 27, Expl 121 bytes)
+        fresh()
+        tq = Quest().tree_path(tree, 0, "iwase\\Treasure.txt")
+        _edit(tq, 'Item:"Potion"', 'Item:"' + "P" * 20 + '"')
+        _edit(tq, 'Expl:"Heals\\nyou."', 'Expl:"' + "e\\n" * 60 + '"')     # \n is one byte: 120
+        ch, pr = plan(iso, tree)
+        check(not pr and (0, "iwase\\Treasure.txt") in ch, "a field of exactly its size minus one is accepted "
+                                                          "(\\n counts one byte)")
+        fresh()
+        _edit(tq, 'Item:"Potion"', 'Item:"' + "P" * 21 + '"')
+        check(refused(iso, tree, "record 1 Item: 21 bytes, but the game copies it into a 21-byte field"),
+              "a field past its size in the loader's record is refused, record and field named")
+        fresh()
+        _edit(tq, 'Locate:"Here"', 'Locate:"Here\r\nand there"')
+        ch, pr = plan(iso, tree)
+        check(not pr, "CR LF inside a text is skipped by the loader and not counted")
+        # USA quest text through the reader's pair conversion (FUN_0022ec18 -> FUN_0023ebb8)
+        fresh()
+        check('Locate:"Ω System"' in tq.read_text(encoding="utf-8"), "USA quest export: the retail pair 83 B6 reads "
+                                                                       "as Ω, what the game draws after the conversion")
+        _edit(tq, 'Locate:"Ω System"', 'Locate:"☆ System ―"')
+        ch, pr = plan(iso, tree)
+        check(not pr and ch.get((0, "iwase\\Treasure.txt"), b"").count(b'Locate:"\x81\x99 System \x81\x5c"') == 1,
+              "typed symbols are written as the Shift-JIS pairs the reader converts to them (☆ 81 99, ― 81 5C)")
+        fresh()
+        _edit(tq, 'Locate:"Ω System"', 'Locate:"Système"')
+        check(refused(iso, tree, "one Latin-1 byte"), "a typed Latin-1 letter in a USA quest file is refused, the pair "
+                                                       "rule explained")
+        fresh()
+        _edit(tq, 'Locate:"Ω System"', 'Locate:"あ System"')
+        check(refused(iso, tree, "A4 A2"), "a kana, which the reader turns into another cell, is refused")
+        fresh()
+        _edit(tq, 'Locate:"Ω System"', 'Locate:"Caf⟦82⟧⟦A0⟧ System"')
+        ch, pr = plan(iso, tree)
+        check(not pr and b'Locate:"Caf\x82\xa0 System"' in ch.get((0, "iwase\\Treasure.txt"), b""),
+              "an escape pair is written as given (never checked)")
+        # the memory-card slot placeholder in MainMenu.txd (FUN_00238038)
+        fresh()
+        mm = Menu().tree_path(tree, 0, "yosikawa\\MainMenu.txd")
+        body = mm.read_text(encoding="utf-8")
+        check(body.count("# £° = the memory-card slot number") == 2 and "#euc: ↑予備ではなく" in body,
+              "MainMenu export: a note above the two strings with the slot placeholder, an EUC reading of the note")
+        _edit(mm, "MEMORY CARD slot £°.\n### 0002", "MEMORY CARD slot.\n### 0002")
+        check(refused(iso, tree, "slot placeholder"), "an edit that drops the slot placeholder is refused")
+        fresh()
+        _edit(mm, "MEMORY CARD slot £°.\n### 0002", "MEMORY CARD slot é£°.\n### 0002")
+        check(refused(iso, tree, "never finds the placeholder"), "é right before the placeholder hides it from the "
+                                                                  "game's walk: refused")
+        fresh()
+        _edit(mm, "MEMORY CARD slot £°.\n### 0002", "carte mémoire, fente £°.\n### 0002")
+        ch, pr = plan(iso, tree)
+        new = txd_parse(ch.get((0, "yosikawa\\MainMenu.txd"), txd_build([b""])))[0]
+        check(not pr and len(new) == 4 and new[1].endswith(b"m\xe9moire, fente \xa3\xb0.") and slot_markers(new[1]),
+              "a reworded line that keeps the placeholder is accepted")
+        check(slot_markers(b"slot \x07\x31.") == [5] and slot_markers(b"\xe9\xa3\xb0") == [] and
+              slot_markers(slot218) == [len(slot218) - 3], "the walk finds a stamped digit, not a placeholder after "
+                                                          "a high byte, and the retail placeholder")
+        # the Skill Tutorial's commands (FUN_00215f10)
+        fresh()
+        tu = Menu().tree_path(tree, 0, "yosikawa\\Tutorial.txd")
+        body = tu.read_text(encoding="utf-8")
+        check(body.count("# tutorial command, not shown") == 4 and "# empty: the tutorial skips it" in body,
+              "Tutorial export: commands and the empty entry are marked")
+        _edit_block(tu, 1, "%P")
+        check(refused(iso, tree, "runs it as a tutorial command"), "a changed tutorial command is refused")
+        fresh()
+        _edit_block(tu, 5, "now text")
+        check(refused(iso, tree, "runs it as a tutorial command"), "text typed into an empty (skipped) entry is refused")
+        fresh()
+        _edit_block(tu, 3, "Vous pouvez personnaliser")
+        ch, pr = plan(iso, tree)
+        check(not pr and txd_parse(ch[(0, "yosikawa\\Tutorial.txd")])[0][3] == b"Vous pouvez personnaliser",
+              "a page of tutorial text is edited")
+        for bad, why in (("%Vous", "run it as a command"), ("", "be emptied"), ("⟦23⟧Vous", "skip it")):
+            fresh()
+            _edit_block(tu, 3, bad)
+            check(refused(iso, tree, why), f"a page edited to {bad or 'nothing'!r} is refused ({why})")
+        # Japanese developer text and battle banners in the banks
+        fresh()
+        xb = Bank().tree_path(tree, 0, "model\\map\\en\\X.sbl")
+        body = xb.read_text(encoding="utf-8")
+        check("#euc: 11テストメッセージ\\n表示中" in body and "#sjis" not in body.split("### 0002")[0],
+              "an EUC test line gets an #euc: reading; Latin-1 text gets none")
+        check(body.count("# battle banner (bat.namePut); the same name is in 2 banks") == 1,
+              "a banner is marked, with the number of banks that hold the same name")
+        _edit(xb, "$zoom13;Medica", "$zoom13;Medica+")
+        notes = []
+        ch, pr = plan_import(str(iso), str(tree), notes=notes)
+        check(not pr and len(ch) == 1 and any("have 2 copies" in n or "2 copies that now differ" in n for n in notes),
+              "a banner edited in one bank only is imported, with a note naming the copy left unchanged")
+        _edit(Bank().tree_path(tree, 0, "model\\map\\en\\Y.sbl"), "$zoom13;Medica", "$zoom13;Medica+")
+        notes = []
+        ch, pr = plan_import(str(iso), str(tree), notes=notes)
+        check(not pr and len(ch) == 2 and not any("copies" in n for n in notes), "edited alike in both banks: no note")
+        fresh()
+        _edit(xb, "$zoom13;Medica", "$zoom13;Medicé")
+        check(refused(iso, tree, "step over the terminator"), "a banner that ends with a one-byte Latin-1 letter is "
+                                                              "refused (FUN_002353b8)")
+        fresh()
+        _edit(xb, "$zoom13;Medica", "$zoom13;Medica of the far too long banner text")
+        notes = []
+        plan_import(str(iso), str(tree), notes=notes)
+        check(any("wider than any banner" in n for n in notes), "a banner wider than any on the disc gets a note")
+        check(banner_width(lambda p: 10, b"$zoom8;ab$init;c") == 10 * 8 // 16 * 2 + 10 + 0x18
+              and banner_width(lambda p: 10 * len(p), b"\xa4\xa2x") == 20 + 10 + 0x18 and banner_overrun(b"ab\xe9")
+              and not banner_overrun(b"ab\xe9c"), "the banner width walk: $zoom scales, $init resets, a high byte "
+                                                    "takes two; a trailing high byte runs over")
+        # the memory-card title (icon.sys in carddata.bin)
+        fresh()
+        it = IconTitle().tree_path(tree, 0, "carddata.bin")
+        body = it.read_text(encoding="utf-8")
+        check("\nＸｅｎｏｓａｇａＥＰＩＩ−００\\n［００：００］\n" in body, "the title is exported with its line break as \\n")
+        _edit(it, "ＸｅｎｏｓａｇａＥＰＩＩ−００\\n", "ＸｅｎｏｓａｇａＥｐ．ＩＩ００\\n")
+        ch, pr = plan(iso, tree)
+        new = ch.get((0, "carddata.bin"), b"")
+        s0 = smallfiles.pack_members(carddata)[0][0]
+        want = "ＸｅｎｏｓａｇａＥｐ．ＩＩ００［００：００］".encode("shift_jis")
+        check(not pr and len(new) == len(carddata) and new[s0 + ICON_TITLE_AT:s0 + ICON_TITLE_AT + 68] == want + bytes(68 - len(want))
+              and new[s0:s0 + 6] == carddata[s0:s0 + 6] and new[s0 + 8:s0 + ICON_TITLE_AT] == carddata[s0 + 8:s0 + ICON_TITLE_AT],
+              "an edited title is written in place, the rest of icon.sys unchanged")
+        fresh()
+        _edit(it, "ＥＰＩＩ−００\\n［", "ＥＰＩＩ−０\\n０［")
+        ch, pr = plan(iso, tree)
+        new = ch.get((0, "carddata.bin"), b"")
+        check(not pr and struct.unpack_from("<H", new, s0 + ICON_BREAK_AT)[0] == 28, "the line break moves to where \\n stands")
+        fresh()
+        _edit(it, "ＸｅｎｏｓａｇａＥＰＩＩ", "ＸｅｎｏｓａｇａＥｐｉｓｏｄｅＩＩ")
+        check(refused(iso, tree, "writes the slot and time"), "an edit that moves the slot and time digits is refused")
+        fresh()
+        _edit(it, "\\n［", "［")
+        check(refused(iso, tree, "exactly one \\n"), "a title without its line break is refused")
+        fresh()
+        _edit(it, "］", "］" + "Ａ" * 12)
+        check(refused(iso, tree, "the field holds 67"), "a title past its 68-byte field is refused")
         # subtitles
         fresh()
         sp = Subtitle().tree_path(tree, 0, "movie\\en\\s0.txt")

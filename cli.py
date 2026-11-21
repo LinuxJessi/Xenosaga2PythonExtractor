@@ -18,6 +18,7 @@ Usage:
     python cli.py text-import --iso DISC.iso --text TEXTDIR --out MODDED.iso [--grow] [--rebase]
     python cli.py exe-export --iso DISC.iso --out EXEDIR
     python cli.py exe-import --iso DISC.iso --text EXEDIR --out MODDED.iso [--retail RETAIL.iso]   (run last)
+    python cli.py text-coverage --iso DISC1.iso [--iso DISC2.iso] [--verify] [--tsv OUT.tsv] [--tex-words]
     python cli.py font-extract --iso DISC.iso --out FONTDIR
     python cli.py font-rebuild --ref FONTDIR/font0.us --sheets FONTDIR --out new.us [--metrics CSV]
     python cli.py patch   --iso DISC.iso --out MODDED.iso --set 'chain0:cf\\en\\sc1010.sbl=new.sbl'
@@ -346,6 +347,12 @@ def cmd_exe_import(args) -> int:
     return exetext.import_(args.iso, args.text, args.out, retail_iso=args.retail)
 
 
+def cmd_text_coverage(args) -> int:
+    import coverage
+
+    return coverage.cmd(args.iso, verify=args.verify, tsv=args.tsv, tex_words=args.tex_words)
+
+
 def cmd_dialogue(args) -> int:
     import dialogue
 
@@ -427,7 +434,7 @@ def cmd_lang_preview(args) -> int:
 SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
               "minidisc", "moviesub", "textcodec", "textpack", "glyphs", "langpack", "exetext",
-              "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
+              "coverage", "vif", "gltf", "xhr", "pxy", "models_sweep", "vuprog")
 
 
 def cmd_self_test(args) -> int:
@@ -550,6 +557,16 @@ def main(argv=None) -> int:
     p.add_argument("--retail", help="the retail disc image: start from its executables, so an image that was "
                                     "exe-patched before can be done again")
     p.set_defaults(func=cmd_exe_import)
+
+    p = sub.add_parser("text-coverage", help="every place the game shows text, and what the kit does with each "
+                                             "(counts from the disc)")
+    p.add_argument("--iso", action="append", required=True, help="a disc image; give Disc 1 and Disc 2 for both")
+    p.add_argument("--verify", action="store_true",
+                   help="also export everything and check that the unedited trees import as no change")
+    p.add_argument("--tsv", help="also write the report as a TSV file")
+    p.add_argument("--tex-words", action="store_true",
+                   help="also list the texture entries with words a player reads (they need picture editing)")
+    p.set_defaults(func=cmd_text_coverage)
 
     p = sub.add_parser("font-extract", help="the fonts as PNG sheets + metrics CSV + the byte-to-cell table")
     p.add_argument("--iso", required=True)

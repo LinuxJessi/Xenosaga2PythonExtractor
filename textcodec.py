@@ -254,6 +254,117 @@ class UsCodec(Codec):
                         f"reads Latin-1 bytes and a few symbol pairs, not Japanese text")
 
 
+def sjis_to_euc(a: int, b: int) -> Tuple[int, int]:
+    """FUN_0023ebb8 (USA SLUS_208.92), ported: the two bytes of a pair rewritten in place,
+    Shift-JIS to EUC-JP, byte arithmetic (every result is taken modulo 256 as the code's
+    byte stores do). The quest reader FUN_0022ec18 calls it on every pair it copies."""
+    a = (a * 2) & 0xFF
+    if b > 0x9E:
+        a = (a + (0xA0 if a < 0x3F else 0x20)) & 0xFF
+        return a, (b + 2) & 0xFF
+    a = (a + (0x9F if a < 0x3F else 0x1F)) & 0xFF
+    return a, (b + (0x60 if b > 0x7E else 0x61)) & 0xFF
+
+
+def _quest_inverse() -> Dict[bytes, bytes]:
+    """USA pair the print function reads as a character (UsCodec.PAIRS) -> the one Shift-JIS
+    pair (lead 81-9F or E0-FC, trail 40-FC but not 7F) that sjis_to_euc turns into it."""
+    found: Dict[bytes, List[bytes]] = {}
+    for a in sorted(_SJIS_LEAD):
+        for b in range(0x40, 0xFD):
+            if b == 0x7F:
+                continue
+            p = bytes(sjis_to_euc(a, b))
+            if p in UsCodec.PAIRS:
+                found.setdefault(p, []).append(bytes((a, b)))
+    return {p: v[0] for p, v in found.items() if len(v) == 1}
+
+
+class UsQuestCodec(SjisCodec):
+    """A quest file of the USA build (QuestMes.txt, Citizen.txt, Treasure.txt) as the game
+    draws it. The reader FUN_0022ec18 copies a byte below 0x80 as it is and every byte from
+    0x80 up together with the next byte, converting the pair with FUN_0023ebb8 (Shift-JIS
+    to EUC-JP). So a pair is shown as the character the USA print function reads the
+    converted pair as (``—``, ``Ω``, ``☆``: the symbols of ``UsCodec.PAIRS``); any other
+    pair as two escapes of its bytes in the file (the retail Citizen.txt writes the ``é``
+    of "Café" as ``⟦82⟧⟦A0⟧``, which becomes A4 A2). Exact for any bytes.
+
+    ``encode_char`` writes a symbol as the Shift-JIS pair that converts to it, and any
+    other character as Shift-JIS (so a tree exported before this codec still imports
+    unchanged); ``typed_problem`` says which typed characters the game cannot draw."""
+    name = "us-quest"
+    INVERSE = _quest_inverse()
+
+    def _decode(self, s: bytes, file: bool) -> str:
+        out, i, n = [], 0, len(s)
+        while i < n:
+            b = s[i]
+            if b < 0x80:
+                keep = b >= 0x20 and b != 0x7F or (file and b in _KEEP_IN_FILES)
+                out.append(chr(b) if keep else _esc(b))
+                i += 1
+                continue
+            if i + 1 >= n:
+                out.append(_esc(b))
+                i += 1
+                continue
+            piece = s[i:i + 2]
+            ch = UsCodec.PAIRS.get(bytes(sjis_to_euc(piece[0], piece[1])))
+            if ch is not None and self.INVERSE.get(UsCodec.CHARS[ch]) == piece:
+                out.append(ch)
+            else:
+                out.append(_esc(piece[0]) + _esc(piece[1]))
+            i += 2
+        return "".join(out)
+
+    def encode_char(self, ch: str) -> bytes:
+        piece = UsCodec.CHARS.get(ch)
+        if piece is not None and piece in self.INVERSE:
+            return self.INVERSE[piece]
+        try:
+            return ch.encode("shift_jis")
+        except UnicodeEncodeError:
+            raise TextError(self._unwritable(ch))
+
+    def _unwritable(self, ch: str) -> str:
+        if 0xA0 <= ord(ch) <= 0xFF:
+            return (f"{ch!r} is one Latin-1 byte to the USA print function, but in a quest file " + self._rule()
+                    + ". The retail Citizen.txt writes the é of 'Café' as ⟦82⟧⟦A0⟧ (the reader makes it A4 A2, a "
+                    "cell of the USA font that is not a kana); write escapes if you know the bytes")
+        return f"{ch!r} (U+{ord(ch):04X}) cannot be written in a USA quest file: " + self._rule()
+
+    @staticmethod
+    def _rule() -> str:
+        return ("the quest reader (FUN_0022ec18) takes every byte from 0x80 up together with the next byte and "
+                "converts the pair from Shift-JIS to EUC-JP (FUN_0023ebb8), so only the two-byte symbols of the USA "
+                "print function can be typed (" + " ".join(c for k, c in UsCodec.PAIRS.items() if k[0] in (0xA1, 0xA2))
+                + ", the Greek letters and the other symbols of row A6)")
+
+    def drawn(self, piece: bytes) -> Optional[str]:
+        """The character the USA print function reads the converted pair as, or None."""
+        if len(piece) != 2 or piece[0] < 0x80:
+            return None
+        return UsCodec.PAIRS.get(bytes(sjis_to_euc(piece[0], piece[1])))
+
+    def typed_problem(self, ch: str) -> Optional[str]:
+        """Why a typed (non-escape, non-ASCII) character of a changed line cannot be drawn as
+        typed, or None."""
+        try:
+            piece = self.encode_char(ch)
+        except TextError as e:
+            return str(e)
+        if len(piece) == 2 and piece[0] >= 0x80:
+            got = self.drawn(piece)
+            conv = bytes(sjis_to_euc(piece[0], piece[1]))
+            if got is None:
+                return (f"{ch!r} (Shift-JIS {piece.hex(' ').upper()}): the reader turns these bytes into "
+                        f"{conv.hex(' ').upper()}, which the USA print function does not draw as this character. "
+                        + self._rule()[0].upper() + self._rule()[1:])
+            return None
+        return (f"{ch!r} (Shift-JIS {piece.hex(' ').upper()}) is one byte from 0x80 up: the reader would take it "
+                f"together with the next byte; " + self._rule())
+
+
 class UsSubtitleCodec(UsCodec):
     """A USA subtitle file: cue lines as the print function reads them, comment lines
     (``;``, the developers' notes, never drawn) as EUC-JP."""
@@ -361,6 +472,22 @@ def self_test() -> int:
     check(t == ";テスト caf⟦E9⟧\n00:01:00\tCafé ♪\nend\n" and UsSubtitleCodec().from_text(t) == sub,
           "USA subtitle file: comment lines read as EUC-JP, cue lines as the print function reads them")
     check(sj.to_text("ｶﾅ漢".encode("shift_jis"), file=True) == "ｶﾅ漢", "Shift-JIS files")
+    # the USA quest reader's pair conversion, from the code's arithmetic (not Python's codecs)
+    check(sjis_to_euc(0x81, 0x5C) == (0xA1, 0xBD) and sjis_to_euc(0x82, 0xA0) == (0xA4, 0xA2)
+          and sjis_to_euc(0x83, 0xB6) == (0xA6, 0xB8),
+          "FUN_0023ebb8 port: 81 5C -> A1 BD, 82 A0 -> A4 A2, 83 B6 -> A6 B8 (the three pairs of the retail files)")
+    q = UsQuestCodec()
+    check(len(q.INVERSE) == len(UsCodec.PAIRS) and all(bytes(sjis_to_euc(*q.encode_char(ch))) == p
+                                                       for p, ch in UsCodec.PAIRS.items()),
+          "every USA symbol pair has one Shift-JIS pair, and the encoder's bytes fed through the port give it back")
+    check(all(c.from_text(c.to_text(every)) == every and c.from_text(c.to_text(every, file=True)) == every
+              for c in (q,)), "the USA quest codec is exact on arbitrary bytes")
+    retail = b"Sidney\x81\\my Caf\x82\xa0 \x83\xb6 System"
+    check(q.to_text(retail, file=True) == "Sidney―my Caf⟦82⟧⟦A0⟧ Ω System" and q.from_text("Sidney―my") == retail[:10],
+          "USA quest file: a pair shows as what the print function draws after the conversion; others as escapes")
+    check(q.typed_problem("Ω") is None and q.typed_problem("☆") is None and "Latin-1" in (q.typed_problem("é") or "")
+          and "A4 A2" in (q.typed_problem("あ") or "") and "one byte" in (q.typed_problem("ｶ") or ""),
+          "USA quest typing: symbols pass; é, a kana (drawn as another cell) and half-width kana are refused")
 
     # check_typed against two synthetic builds and a font with ink only where told
     import region

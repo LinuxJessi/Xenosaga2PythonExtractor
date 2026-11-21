@@ -65,6 +65,15 @@ the ones that put a line on screen:
 | `talk.menuAddItem` | 534 | a choice; the options are one string split by `\n` | (0, text) |
 | `cfe.setMes` | 1,946 | a real-time event subtitle | (text, start, end, voice, 0) |
 | `bat.msgPut` | 688 | a line spoken in battle (`$col`/`$zoom` codes) | (x, y, text, ..., ..., ...) |
+| `bat.namePut` | 1,363 | a battle banner: the name of an enemy's skill or action, 416 different names (`$zoom13;Medica`) | (..., ..., ..., text, ...) |
+
+`bat.namePut` lines are listed as `(banner)` in the transcripts and with
+native `bat.namePut` in `dialogue.csv`. OV01's `FUN_00aa1330` looks the
+fourth argument up in the bank through `FUN_00a9f238` (the lookup
+`bat.msgPut` uses) and hands it to `FUN_002355d8`, which draws the box as
+wide as the text. A name has a copy in every bank whose battles use it;
+`text-export` marks them and `text-import` notes copies edited unalike
+(docs/MODDING.md, "Battle banners").
 
 `cfe.setMes` is two things. Called with an empty text it names the event's
 voice track, `cfevent/S-01-03-00/S01_03_00`, which is
@@ -94,10 +103,13 @@ by the scene's author.
 Voice without text is listed as well, so the order of what you hear is
 complete: `bat.streamPlay` (303 battle barks, `sound\adx\battle\<name>.adx`,
 mostly without a subtitle) and `runtime.adxplay`/`runtime.adx` (31 field voice
-clips, `sound\adx\CF_*.adx`). Everything else the scripts pass as text is a
+clips, `sound\adx\CF_*.adx`). Most else the scripts pass as text is a
 resource name and is left out: effect names to `runtime.setNumber`, motion
-files to `cfe.ldMt`, movie names to `runtime.mpeg2`, skill banners to
-`bat.namePut` (1,363 of those).
+files to `cfe.ldMt`, movie names to `runtime.mpeg2`. Not resource names but
+also left out of the transcripts: the strings `100`, `802` and `102` that
+`samp.fontPut` draws (28 calls; they look like a debug or template routine,
+not checked in the game). They are exported in the bank files like every
+string, and `text-coverage` counts them.
 
 Speakers: field and battle lines carry `[Speaker]` in the text and it is split
 off. Event and movie lines carry no speaker anywhere on the disc.
@@ -122,8 +134,26 @@ where the next cue starts; `end` closes the file. `$ay390;$xx0,22;` place the
 text, `\n` breaks it, `[漢字/かんじ]` is ruby and keeps its base. The movies'
 lines carry no speaker. Besides the `sNNNNNN` story movies there are `EPSTAFF`
 (the staff-roll movie, which has dialogue) and `EP07` (a closing scene).
-Five of the 50 movies have no subtitle file: `s020310`, `s060400`, `s06over`,
-`s080500`, `s090500`.
+Five of the 50 movies have no subtitle file: `s020310`, `s060400`,
+`s06over`, `s080500`, `s090500`. Four of them have the same audio on the
+Japanese and the USA discs, so they are probably wordless. `s020310` (108.6
+s) is not: its USA audio track differs from the Japanese one (re-dubbed, so
+probably voiced; nobody has listened to it yet), and neither region has a
+subtitle file for it, so whatever is said in it exists only as sound and no
+text tool can reach it. Adding one is not possible within what the code
+allows: the player (`FUN_001e7d08`) builds the path from the movie's name
+and reads it through the TOC (`FUN_0019c1e0`, which returns -1 for a missing
+file, and then the movie plays without subtitles); the cues are kept at the
+start of the block allocated for the video decoder and the decoder's work
+area starts right after them (see "Subtitle limit" in MODDING.md). With no
+file that work area starts at the block's start, so there is no room for any
+cue. The table of contents itself could take a new name (the lookup
+`FUN_0019b458` walks it from the start and compares whole paths, order does
+not matter, and Disc 1's movie TOC, which one branch of `FUN_0019d850` reads
+into a 0x1800-byte area, has about 1,900 bytes of filler left), but that
+does not help the decoder's block. `text-import` therefore refuses a
+subtitle file in the tree for a movie that has none on the disc, and says
+why.
 
 ## Voice clips (`--voice`)
 

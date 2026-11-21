@@ -43,6 +43,7 @@ The Episode I kit's rules, kept (the first one with three packages added):
                             ├─ text-export / text-import ─► textpack.py ─► sbl.py, repack.py
                             ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py, exetext.py
                             ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
+                            ├─ text-coverage ─► coverage.py ─► textpack.py, exetext.py
                             └─ patch / recolor ─► repack.py, recolor.py
 ```
 
@@ -67,7 +68,8 @@ The Episode I kit's rules, kept (the first one with three packages added):
 | `textcodec.py` | text bytes <-> editable text per build, and the check on typed characters |
 | `glyphs.py` | new glyphs into the USA fonts: the code tiers, allocation, rasterising with fontTools/uharfbuzz (from the Episode I kit, addressing rewritten; [ALPHABETS.md](ALPHABETS.md)) |
 | `langpack.py` | shaping, bidi order, wrapping and encoding of a translated tree in a new alphabet (from the Episode I kit) |
-| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree; written back in place (from the Episode I kit's `ovltext.py`) |
+| `exetext.py` | the strings the code points at in the boot ELF, OV01 and OV02, as a tree, read with the print function's control-code grammar; written back in place (from the Episode I kit's `ovltext.py`) |
+| `coverage.py` | every place the game shows text, counted from the disc, with what the kit does with it; `--verify` round-trips the unedited trees |
 | `vsf.py` | KORG sample banks to WAV |
 | `prj.py` | KORG projects: keys, programs, SoundFont 2 ([MUSIC.md](MUSIC.md)) |
 | `midi.py` | Standard MIDI helpers (channel 10 for General-MIDI players) |

@@ -27,6 +27,9 @@ decodes (2026-11-05, every claim checked on the USA discs):
   items (9), secret keys (10), decoders (11), special attacks (12), E.S.
   attacks and weapons (13, 14), grade letters (17) and battle messages (18,
   "Acquired ", "Stole ", status names). Text a translation has to cover.
+  Which u16 fields are string offsets was read from the USA OV01's getters
+  (``BATDAT_STRING_FIELDS``): ``batdat_rebuild`` lets a string grow by moving
+  the rest of its section down and rewriting exactly those fields.
 * ``.id`` (map data): u8 version 3, u8 section count, then u32 section
   offsets; each section starts with u8 0, u8 type. ``.epf``: "EPF " + float
   version + count + records of 0x20 bytes (two u32 then six floats).
@@ -269,6 +272,135 @@ def batdat_replace(data: bytes, new: Dict[Tuple[int, int], bytes]) -> bytes:
     return bytes(out)
 
 
+# Which u16 fields of the battle database are string offsets, read from the USA OV01 (2026-11-20). Every
+# section is reached through the header: OV01's accessors return ``*(int *)(0x61D048 + 4 * section) +
+# 0x61D040`` plus a record index times a record size (FUN_00a9b338 / FUN_00a9b2a8 sections 0 and 1,
+# FUN_00a9b490 section 6, ..., FUN_00a9b720 section 18), and the getters below add a signed u16 of the
+# record to the section's start and return the string. No other code adds 0x61D040 to anything, so the
+# header's section offsets are the only file positions the game reads; offsets inside a section are
+# relative to the section. section -> (record size, string-offset fields, the getter that reads them).
+BATDAT_STRING_FIELDS: Dict[int, Tuple[int, Tuple[int, ...], str]] = {
+    0: (0x5C, (0,), "FUN_00a9b338"),          # party names
+    1: (0x5C, (0,), "FUN_00a9b338"),          # enemy names
+    6: (0x0C, (0, 2), "FUN_00a9b750"),        # name, description
+    7: (0x0C, (0, 2), "FUN_00a9b850"),
+    8: (0x10, (0, 2), "FUN_00a9b7d8"),
+    9: (0x10, (0, 2), "FUN_00a9b8d8"),
+    10: (0x04, (0, 2), "FUN_00a9b950"),
+    11: (0x08, (0, 2), "FUN_00a9b9c8"),
+    12: (0x10, (0, 2), "FUN_00a9ba40"),
+    13: (0x10, (0, 2), "FUN_00a9bab8"),
+    14: (0x10, (0, 2), "FUN_00a9bb30"),
+    18: (0x02, (0,), "FUN_00a9bba8"),         # battle messages: a plain list of offsets
+}
+BATDAT_SECTION_ALIGN = 4                       # every section offset of both retail files is a multiple of 4
+
+
+def batdat_fields(data: bytes) -> Dict[Tuple[int, int, int], int]:
+    """{(section, record, field offset): string offset} for every field of ``BATDAT_STRING_FIELDS``. A
+    section's records run up to its first string (the first record's first field), which on both retail
+    files is a whole number of records; a section where it is not (no text there) has no fields, and its
+    strings cannot grow."""
+    out = {}
+    secs = batdat_sections(data)
+    for si, (rs, cols, _) in BATDAT_STRING_FIELDS.items():
+        if si >= len(secs):
+            continue
+        a, b = secs[si]
+        if b - a < 2:
+            continue
+        pool = struct.unpack_from("<h", data, a)[0]
+        if pool <= 0 or pool % rs or pool >= b - a:
+            continue
+        for r in range(pool // rs):
+            for c in cols:
+                out[(si, r, c)] = struct.unpack_from("<h", data, a + r * rs + c)[0]
+    return out
+
+
+def batdat_field_texts(data: bytes) -> Dict[Tuple[int, int, int], bytes]:
+    """What each string field reads, the way the getters read it: the section start plus the field,
+    up to the NUL."""
+    secs = batdat_sections(data)
+    return {k: _cstr(data[secs[k[0]][0]:secs[k[0]][1]], v) for k, v in batdat_fields(data).items()}
+
+
+def batdat_rebuild(data: bytes, new: Dict[Tuple[int, int], bytes], grow: bool = False,
+                   max_size: Optional[int] = None) -> bytes:
+    """The battle database with some strings replaced. A string that fits its old bytes is replaced in
+    place (``batdat_replace``). With ``grow``, a longer string of a section whose string fields are known
+    (``BATDAT_STRING_FIELDS``) is written where it is and the rest of its section's strings move down to
+    make room: every known field of that section that points past the string's start is moved by the
+    same amount, the section is padded to a multiple of 4, the later sections move down whole, and the
+    header's section offsets and file size follow. No other byte changes. ``max_size`` is the most the
+    file may then hold (the caller's bound: the sectors the game reads).
+
+    Refused, with the reason: a longer string in a section whose fields are not known (17), a string no
+    known field points at, a known field pointing inside the old string, an offset past 0x7FFF (the
+    getters read a signed u16), and a file over ``max_size``. The result is read back the way the
+    getters read it: every field must give its old text, or the new text where it pointed at an edit."""
+    known = {(si, o): raw for si, o, raw in batdat_raw_strings(data)}
+    fit = {k: v for k, v in new.items() if k not in known or len(v) <= len(known[k])}
+    longer = {k: v for k, v in new.items() if k not in fit}
+    out = batdat_replace(data, fit)
+    if not longer:
+        return out
+    if not grow:
+        batdat_replace(data, longer)                  # raises the in-place message
+    secs = batdat_sections(out)
+    segs = [bytearray(out[a:b]) for a, b in secs]
+    fields = batdat_fields(out)
+    for (si, o), text in sorted(longer.items(), key=lambda kv: (kv[0][0], -kv[0][1])):   # last string first
+        old = known[(si, o)]
+        if b"\x00" in text:
+            raise SmallFileError(f"section {si} offset {o:#x}: a string may not contain NUL")
+        if si not in BATDAT_STRING_FIELDS:
+            raise SmallFileError(f"section {si} offset {o:#x}: {len(text)} bytes, the original has {len(old)}; "
+                                 f"which fields of section {si} point at its strings has not been read from the "
+                                 f"game, so its strings are replaced in place and may not get longer")
+        mine = [k for k, v in fields.items() if k[0] == si and v == o]
+        inside = [k for k, v in fields.items() if k[0] == si and o < v < o + len(old)]
+        if inside:
+            raise SmallFileError(f"section {si} offset {o:#x}: record {inside[0][1]} points inside this string; "
+                                 f"it may not get longer")
+        if not mine:
+            raise SmallFileError(f"section {si} offset {o:#x}: no string field the game reads points at it, so "
+                                 f"it is replaced in place and may not get longer")
+        delta = len(text) - len(old)
+        seg = segs[si]
+        seg[o:o + len(old)] = text
+        rs = BATDAT_STRING_FIELDS[si][0]
+        for k, v in list(fields.items()):
+            if k[0] == si and v > o:
+                if v + delta > 0x7FFF:
+                    raise SmallFileError(f"section {si} offset {o:#x}: the strings after it would move past "
+                                         f"0x7FFF, where the game's signed 16-bit offsets end")
+                struct.pack_into("<h", seg, k[1] * rs + k[2], v + delta)
+                fields[k] = v + delta
+    for si in {si for si, _ in longer}:
+        segs[si] += bytes(-len(segs[si]) % BATDAT_SECTION_ALIGN)
+    head = bytearray(out[:secs[0][0]])
+    pos = len(head)
+    for i, seg in enumerate(segs):
+        struct.pack_into("<I", head, 8 + 4 * i, pos)
+        pos += len(seg)
+    struct.pack_into("<I", head, 4, pos)
+    blob = bytes(head) + b"".join(bytes(sg) for sg in segs)
+    if max_size is not None and len(blob) > max_size:
+        raise SmallFileError(f"the longer strings make the battle database {len(blob)} bytes; it may hold "
+                             f"{max_size} ({len(blob) - max_size} over), the sectors the game reads. Shorten "
+                             f"other strings or the edit")
+    # read back what the game would read, field by field, against what was asked for
+    before = batdat_field_texts(data)
+    after = batdat_field_texts(blob)
+    for k, v in batdat_fields(data).items():
+        expect = new.get((k[0], v), before[k])
+        if after.get(k) != expect:
+            raise SmallFileError(f"section {k[0]} record {k[1]} field +{k[2]}: would read {after.get(k)!r}, "
+                                 f"expected {expect!r}; nothing written")
+    return blob
+
+
 # -------------------------------------------------------- describe anything
 
 def describe(path: str, data: bytes) -> str:
@@ -446,6 +578,70 @@ def self_test() -> int:
             check(False, f"batdat_replace refuses: {why}")
         except SmallFileError:
             check(True, f"batdat_replace refuses: {why}")
+    # strings that grow: a database with the retail section numbering (19 sections), section 6 with
+    # 12-byte records (name +0, description +2, a number +4 that equals a string offset), section 18 a
+    # list of offsets, section 17 text whose fields are not known, the rest numbers
+    def sec6():
+        pool = b"Fire\x00Burns.\x00Ice\x00\x00Freezes.\x00\x00"
+        base = 3 * 12
+        rec = (struct.pack("<3h3H", base, base + 5, base + 12, 0, 0, 0)
+               + struct.pack("<3h3H", base + 12, base + 17, base + 5, 0, 0, 0)
+               + struct.pack("<3h3H", base + 12, base + 15, 9, 0, 0, 0))      # empty description: a NUL
+        return rec + pool + bytes(-len(rec + pool) % 4)
+    sec18 = struct.pack("<2h", 4, 10) + b"Stole\x00Got\x00\x00\x00"
+    sec17 = struct.pack("<2h", 4, 6) + b"A\x00B\x00\x00\x00"
+    sections = [struct.pack("<4H", 1, 2, 3, 4)] * 19
+    sections[6], sections[17], sections[18] = sec6(), sec17, sec18
+    hlen = 8 + 4 * 19
+    offs, pos = [], hlen
+    for sg in sections:
+        offs.append(pos)
+        pos += len(sg)
+    g = struct.pack("<II", 19, pos) + struct.pack("<19I", *offs) + b"".join(sections)
+    check(batdat_rebuild(g, {}, grow=True) == g and batdat_rebuild(g, {(6, 41): b"Burns."}, grow=True) == g,
+          "batdat_rebuild of unedited text is the file itself")
+    gt = batdat_field_texts(g)
+    g2 = batdat_rebuild(g, {(6, 41): b"Burns badly."}, grow=True)
+    s6 = batdat_sections(g2)[6]
+    seg = g2[s6[0]:s6[1]]
+    rec0 = struct.unpack_from("<3h", seg, 0)
+    ft = batdat_field_texts(g2)
+    check(rec0[1] == 41 and seg[41:].startswith(b"Burns badly.\x00Ice\x00\x00Freezes.\x00")
+          and struct.unpack_from("<h", seg, 12)[0] == 54 and (s6[1] - s6[0]) % 4 == 0,
+          "a longer string stays where it is; the section's later strings move down")
+    check(rec0[2] == 48, "a number field (+4) that equals a string's offset is left alone")
+    check(ft[(6, 0, 2)] == b"Burns badly." and all(ft[k] == gt[k] for k in gt if k != (6, 0, 2)),
+          "every field the getters read gives the old text but the one edited (read back from the result)")
+    check(struct.unpack_from("<h", seg, 12 + 4)[0] == 41 and struct.unpack_from("<h", seg, 24 + 4)[0] == 9,
+          "a number that equals the moved string's old offset is left alone")
+    check(sorted(r for _, _, r in batdat_raw_strings(g2)) == sorted(
+          [b"Fire", b"Burns badly.", b"Ice", b"Freezes.", b"Stole", b"Got", b"A", b"B"]),
+          "the next export finds the same strings, the edited one at its new place")
+    o_old, o_new = batdat_sections(g), batdat_sections(g2)
+    grown = len(g2) - len(g)
+    check(grown % 4 == 0 and struct.unpack_from("<I", g2, 4)[0] == len(g2)
+          and all(o_new[i][0] == o_old[i][0] for i in range(7))
+          and all(o_new[i][0] == o_old[i][0] + grown for i in range(7, 19))
+          and all(g2[o_new[i][0]:o_new[i][1]] == g[o_old[i][0]:o_old[i][1]] for i in range(19) if i != 6),
+          "the later sections move down whole; the header's offsets and size follow; no other section changes")
+    g3 = batdat_rebuild(g, {(18, 10): b"Received", (6, 41): b"Burn"}, grow=True)
+    check(batdat_field_texts(g3)[(18, 1, 0)] == b"Received" and batdat_field_texts(g3)[(6, 0, 2)] == b"Burn"
+          and len(g3) - len(g) == 8, "a battle message grows in the offset list; a shorter edit stays in place")
+    g4 = batdat_rebuild(g, {(6, 48): b"Icicle"}, grow=True)
+    check(batdat_field_texts(g4)[(6, 2, 2)] == b"" and batdat_field_texts(g4)[(6, 1, 2)] == b"Freezes.",
+          "an empty description at a string's NUL stays empty when that string grows")
+    gin = bytearray(g)
+    struct.pack_into("<h", gin, batdat_sections(g)[6][0] + 24 + 2, 49)
+    for bad, why, kw, src in (({(6, 48): b"Icicle"}, "a field points inside the string", {"grow": True}, bytes(gin)),
+                              ({(6, 41): b"Burns badly."}, "in place without grow", {}, g),
+                              ({(17, 6): b"BB"}, "a section whose fields are not known (17)", {"grow": True}, g),
+                              ({(6, 41): b"Burns badly."}, "over the size bound", {"grow": True,
+                                                                                 "max_size": len(g) + 4}, g)):
+        try:
+            batdat_rebuild(src, bad, **kw)
+            check(False, f"batdat_rebuild refuses: {why}")
+        except SmallFileError:
+            check(True, f"batdat_rebuild refuses: {why}")
     print("self-test", "passed" if ok else "FAILED")
     return 0 if ok else 1
 

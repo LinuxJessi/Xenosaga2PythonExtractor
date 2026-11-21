@@ -150,11 +150,41 @@ COMMAND_HELP = {
     "sb": "Disassemble one scene or map script, with every native call named and every "
           "spoken line shown beside the instruction that uses it. "
           "Example path: <code>cf\\sc1010.sb</code>.",
-    "text-export": "Write every dialogue, menu and subtitle bank to an editable UTF-8 tree "
-                   "(one file per bank, <code>### NNNN</code> markers).",
-    "text-import": "Rebuild the banks you edited and patch them into a <em>copy</em> of the "
-                   "disc. The whole import is refused if one bank no longer fits its slot; "
-                   "every write is read back.",
+    "text-export": "Write the game's text to an editable UTF-8 tree, one file per text object: dialogue banks, "
+                   "menus (item, skill and location names, help, the database, the Skill Tutorial), the battle names "
+                   "and messages, the battle banners, the quest, citizen and treasure text, movie subtitles and the "
+                   "save's title in the memory-card browser. <code>#</code> lines are notes (a banner, a tutorial "
+                   "command, the memory-card slot number, a reading of Japanese leftovers). Strings in the "
+                   "executables are <em>exe-export</em>.",
+    "text-import": "Write an edited text tree back into a <em>copy</em> of the disc: dialogue banks, the inline "
+                   "script text (Japan and the demo), menus, battle names and messages, quest, citizen and treasure "
+                   "text, movie subtitles and the save's title in the memory-card browser. Each kind keeps to the "
+                   "limit its loader allows (banks and menus within their room, a longer battle string moves the "
+                   "rest of its section down within the file's sectors, quest texts within their fields); anything past "
+                   "a limit is refused and nothing is written. The memory-card slot number and the Skill Tutorial's "
+                   "commands are kept; a battle banner edited in one bank but not its copies gets a note. An unedited "
+                   "tree imports as no change; every write is read back.",
+    "dialogue": "Every spoken and displayed line in the order the game plays it: one transcript per scene, field "
+                "and battle script with speakers, choices, battle banners and branches, the movies' and real-time "
+                "events' subtitles "
+                "as SRT, and <code>dialogue.csv</code>. Each line keeps its bank number, so it maps back to the "
+                "<em>text-export</em> block you edit. <em>Voice</em> also cuts one WAV per timed line (ffmpeg). "
+                "Reading only: it writes nothing to the disc.",
+    "font-extract": "The two fonts (<code>font0</code> dialogue, <code>font1</code> menus) as PNG sheets of 20x24 "
+                    "cells, a metrics CSV of each cell's left and right spacing, and the table of which byte draws "
+                    "which cell. Edit the sheets to draw new letters for a translation, then use "
+                    "<em>font-rebuild</em>.",
+    "font-rebuild": "Build a font file from edited sheets and metrics, starting from the retail font as "
+                    "<em>Ref</em>. A folder without any sheet or metrics is refused unless <em>Allow unchanged</em> "
+                    "is ticked. Put the new font on a copy of the disc with <em>patch</em> "
+                    "(<code>chain0:font0.us=...</code>).",
+    "natives": "List every script native (the calls a script makes into the game, such as "
+               "<code>bat.msgPut</code>) with how often it is called and the argument types seen. "
+               "<em>Output</em> also writes a listing of every script.",
+    "recolor": "Hue-shift named textures in every copy on a <em>copy</em> of the disc, found by their txy entry "
+               "name (standalone and inside effect files); the default recolours KOS-MOS's hair. "
+               "<em>Xtx</em> colourises one true-colour UI sheet instead, such as the title menu words. "
+               "Colours only: it cannot redraw words in a texture.",
     "exe-export": "Write the strings the game's code points at (the boot executable, OV01.OVL and "
                   "OV02.OVL: <em>Saving...</em>, the memory-card prompts, <em>Total Exp</em>) to an editable "
                   "tree, one <code>### @ADDRESS max N bytes</code> block per string.",
@@ -162,6 +192,10 @@ COMMAND_HELP = {
                   "<code>max N</code> bytes, the rest of its slot filled with zeros. Run it <em>last</em>: "
                   "afterwards the executable is not the retail one and text-import, font-extract and lang-scan "
                   "refuse the image. For another round, give the retail disc as <em>Retail disc</em>.",
+    "text-coverage": "List every place the game shows text and what the kit does with it, counted from the disc: "
+                     "the text it edits, the strings in the executables, and the words drawn into pictures and "
+                     "movies (those need picture editing). <em>Verify</em> also checks that unedited exports import "
+                     "as no change.",
     "patch": "Replace whole objects in a copy of the disc. One replacement per line: "
              "<code>chain0:cf\\en\\sc1010.sbl=/path/to/new.sbl</code>.",
     "lang-scan": "Translating into an alphabet the game never had (Arabic, Hindi, Georgian, ...): shape the "
@@ -1139,6 +1173,14 @@ def self_test() -> int:
     real = cli_parser(climod)
     sub = next(a for a in real._actions if isinstance(a, argparse._SubParsersAction))
     check(set(sub.choices) == names, f"every cli.py subcommand has a card ({len(sub.choices)} commands)")
+    missing = sorted(n for n in sub.choices if not COMMAND_HELP.get(n) and not any(
+        n in c["aliases"] and COMMAND_HELP.get(c["name"]) for c in cmds))
+    check(not missing, "every cli.py subcommand's card has its long help text"
+          + (f" (missing: {', '.join(missing)})" if missing else ""))
+    named = {m for v in COMMAND_HELP.values()
+             for m in re.findall(r"\b(?:text|exe|font|lang|texture|model)-[a-z]+\b", v)}
+    check(named and named <= set(sub.choices), "every command a card's text names is a cli.py subcommand"
+          + (f" (not: {', '.join(sorted(named - set(sub.choices)))})" if named - set(sub.choices) else ""))
     dump = find_command("dump")
     check(dump is not None and "extract" in dump["aliases"], "dump and extract share one card")
     form = {"iso": ["/d/Disc 1.iso\n/d/Disc 2.iso"], "out": ["/o"], "code": ["on"], "glob": [""]}

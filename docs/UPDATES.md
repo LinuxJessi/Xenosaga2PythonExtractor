@@ -1,5 +1,80 @@
 # Updates
 
+## 2026-11-20 (round 4): the user's walk-through of text coverage
+
+* **Reading hints stay on one line.** Seven `exe-export` hints for Japanese
+  developer strings in SLUS_208.92 / SLUS_211.33 (the ladder label at
+  0x006899D0, `メモカテスト` at 0x00688B58 and five more) carried the
+  string's raw control bytes: a carriage return or a vertical tab. An editor,
+  or a script that reads the file in text mode, ends the comment line there,
+  and the rest of the hint becomes a line of its own, which `exe-import`
+  reads as the string's new text and refuses. The hints of both exports now
+  write every control character as a `⟦XX⟧` escape. Found by exporting both
+  USA discs, editing one string of every kind, importing onto copies and
+  exporting again; the walk-through itself is not part of the kit.
+
+## 2026-11-20 (round 3): text coverage, the last gaps
+
+* **Memory-card slot number (USA).** Twelve `MainMenu.txd` prompts carry the
+  placeholder `£°` (A3 B0) that `FUN_00238038` overwrites with the slot's
+  digit. The export notes it above each block; `text-import` refuses an edit
+  that drops it or hides it from the game's walk (an accented letter right
+  before it).
+* **Skill Tutorial commands.** 199 of the 255 `Tutorial.txd` entries are
+  commands `FUN_00215f10` runs (`%p`, `%tNN`, `*`, ...) or entries it skips.
+  They are marked, and `text-import` refuses a change to them or a page of
+  text turned into one.
+* **USA quest characters.** The quest reader converts every pair from
+  Shift-JIS to EUC-JP (`FUN_0022ec18` -> `FUN_0023ebb8`, ported). The three
+  files the USA loaders read now show what the game draws (`―`, `Ω`; other
+  pairs as escapes, so the retail `Caf⟦82⟧⟦A0⟧`), and typed USA symbols are
+  accepted through the inverse conversion instead of every non-ASCII
+  character being refused. A Latin-1 letter is still refused, with the
+  reason. Not yet looked at in the running game.
+* **Battle banners.** The 416 names (1,363 calls) scripts pass to
+  `bat.namePut` are marked in the bank files and listed by `dialogue` as
+  `(banner)`; `text-import` notes copies edited unalike and banners wider
+  than any retail one, and refuses one whose width walk would run past its
+  end. `text-coverage` counts them, and `samp.fontPut`'s digit strings.
+* **Japanese leftovers** get a `#sjis:` or `#euc:` reading line in bank and
+  menu exports (the 20 EUC test lines and `MainMenu` 0318/0399 had none),
+  and Latin-1 lines no longer get a false Shift-JIS hint.
+* **Executable**: the field-debug label `ハシゴ` (0x006899D0) is listed by
+  `exe-export` (a control code and three kana now count as text in the print
+  grammar; on the retail executables that adds this run only).
+* **Docs and app**: commands named on this branch only (no `lang-scan`), the
+  app self-test checks that every command a card names exists; twelve more
+  texture entries with words in `TEX_WORDS`; the language folder and the
+  Subtitles switch share one byte (MODDING.md, "Languages").
+
+## 2026-11-20 (later still): text coverage, round 2
+
+* **Battle strings grow (USA).** The string fields of the battle database
+  were read from OV01's getters (`FUN_00a9b338`, `FUN_00a9b750` ...
+  `FUN_00a9bba8`): sections 0, 1, 6-14 and 18. A longer string is written
+  where it is, the rest of its section moves down, exactly those fields are
+  moved, the later sections and the header follow, and the result is read
+  back field by field (`smallfiles.batdat_rebuild`). The file keeps to its
+  sectors (220 spare bytes on the USA disc). Section 17 and the Japanese
+  file stay in place. An unedited tree still imports as no change.
+* **Subtitles for a movie without any** (`s020310` and four others):
+  `text-import` refuses such a file and says why (the movie player keeps
+  the cues in the video decoder's block, which has no room when there were
+  none). `s020310`'s re-dubbed USA voice track is noted in DIALOGUE.md.
+* **`text-coverage`**: rows for the party-menu labels, the battle pop-ups
+  and glyph effect inside effect files, the ANIMA logo, the quest-board
+  pictures, and checked negatives (`no text`: door pictures, disc-change
+  picture, boot images, `matumoto` textures, UMN banners); the map texture
+  survey (OCR, at least 109 files with words, 12 `_us` entries) and the
+  movies with drawn words. `--tex-words` lists the texture entries with
+  words; `--verify` also checks that they are on the disc and tries the
+  battle growth writer on the disc's own file.
+* **App**: cards for `dialogue`, `font-extract`, `font-rebuild`, `natives`
+  and `recolor`; the `text-import` card lists everything it writes. The app
+  self-test checks that every command has its card text.
+* **Executable strings**: why none grows, and the one debug string left out
+  on purpose (MODDING.md).
+
 ## 2026-11-20 (evening): the language suite on one branch
 
 The alphabets (`lang-scan`, `lang-encode`, `lang-preview`), the executable
@@ -57,6 +132,31 @@ minutes of a New Game, built with kit commands only and booted in PCSX2
   (`&12` came out as `21&`); `exe-import --retail` resets an executable the
   tree leaves out to retail, so a second round equals a fresh import. Each
   with a self-test. The disc was rebuilt with these and booted again.
+
+## 2026-11-20 (later): text coverage
+
+* **`text-coverage`** (`coverage.py`): every place the game shows text and
+  what the kit does with it, counted from the disc; text drawn into pictures
+  and movies is listed apart. `--verify` checks that every unedited tree
+  imports as no change on each disc given (it does on both USA discs).
+* **Executable strings, control codes**: strings are read with the print
+  function's grammar (`FUN_00197bb8`; parameter counts agree with the table
+  at 0x0063EA40), so the save prompts (`0B 0E 01 01 00 00 00 ...`), the skip
+  line, `Start game?` and the memory-card prompt are listed whole. Codes and
+  their parameters are escapes in the tree; an edit that ends inside a code,
+  puts a zero byte where a character belongs, uses a code the loop never
+  passes or leaves a `$code` open is refused. A `lui` on another path of the
+  same function is followed to aligned string starts. The HDD installer's
+  EUC-JP prompts are listed. Blocks drawn only by the debug print are marked
+  `# debug (FUN_00195760 only)`, and blocks whose codes draw ASCII with the
+  8x8 system font say so. The tree format is 2; export again.
+* **Quest text**: each text must fit its field of the loader's record (read
+  from `FUN_0022ee08`, `FUN_0022f000`, `FUN_00232160`); a file an editor saved
+  with LF line ends gets its CR LF back, a mixed one is refused.
+* **Memory-card title** (`icontitle`, `carddata.bin.title.txt`): edited in
+  place; the characters the save writer `FUN_0019dc10` stamps (slot and
+  time) stay where they are. USA only.
+* Merged from `lang-exetext`: `exe-export` / `exe-import` themselves.
 
 ## 2026-11-20: new alphabets (`lang-scan`, `lang-encode`, `lang-preview`)
 

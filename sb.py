@@ -401,6 +401,32 @@ def listing(script: Script, strings: Optional[List[bytes]] = None) -> str:
     return "\n".join(lines)
 
 
+def build_script(code: bytes, imports: List[Tuple[str, str]], entries: Optional[List[Tuple[str, int]]] = None,
+                 glob: bytes = b"", source: str = "test\\x") -> bytes:
+    """A script file from its parts, in the layout ``parse`` reads (for tests)."""
+    entries = entries or [("main", 0)]
+    names = b"".join(n.encode() + b"\x00" for n, _ in entries)
+    ent_tab = b"".join(struct.pack("<II", 8 * len(entries) + sum(len(m.encode()) + 1 for m, _ in entries[:k]), w)
+                       for k, (_, w) in enumerate(entries))
+    ent = ent_tab + names
+    ent += b"\x00" * (-len(ent) % 4)
+    pool, tab = b"", b""
+    for cls, fn in imports:
+        c = len(pool)
+        pool += cls.encode() + b"\x00"
+        f = len(pool)
+        pool += fn.encode() + b"\x00"
+        tab += struct.pack("<HH", f, c)
+    imp = tab + pool
+    glob_off = 0x40 + len(code)
+    ent_off = glob_off + len(glob)
+    imp_off = ent_off + len(ent)
+    src_off = imp_off + len(imp)
+    head = MAGIC + struct.pack("<10I", 1, 0, len(entries), len(imports), 0x40, glob_off, ent_off, ent_off, imp_off,
+                               src_off)
+    return head.ljust(0x40, b"\x00") + code + glob + ent + imp + source.encode() + b"\x00"
+
+
 def self_test() -> int:
     ok = True
 
