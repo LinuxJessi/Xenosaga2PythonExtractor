@@ -43,7 +43,8 @@ examples.*
 [Changing textures](#changing-textures) · [Translating](#translating-into-another-alphabet) ·
 [Text coverage](#text-coverage) · [Audio samples](#audio-samples) ·
 [Movies, fonts and menus](#movies-fonts-and-menus) · [The window](#the-window) ·
-[Regions](#regions-and-the-demo-disc) · [Still open](#still-open) · [Docs](#docs)
+[Regions](#regions-and-the-demo-disc) · [Still open](#still-open) · [Docs](#docs) ·
+**[Fun facts](docs/FUN-FACTS.md)**
 
 ## Quick start
 
@@ -359,7 +360,7 @@ new command appears on its own; each field gets a picker for disc
 images and folders, "Show command" prints the command line it will run, and
 the output streams into the log on the right. The panel lists the discs found
 next to the kit and in the usual folders, and which optional tools are
-present. (The disc paths in this screenshot are example names.)
+present. (The discs in this screenshot are empty stand-ins with the usual file names.)
 
 ## Regions and the demo disc
 
@@ -454,6 +455,7 @@ its name. Relocating a file past the end of Disc 1 is proven in the game.
 | [MUSIC.md](docs/MUSIC.md) | render the music and see how the renderer was checked |
 | [FORMATS.md](docs/FORMATS.md) | see the byte layout of every format and how it was proven |
 | [CODEBASE.md](docs/CODEBASE.md) | find your way around the code and `tools/` |
+| [FUN-FACTS.md](docs/FUN-FACTS.md) | read sixty-odd things the disc gives away: staff folders, a quest you cannot fail, the KORG driver, an unused hard-disk installer |
 | [FINDS.md](docs/FINDS.md), [HISTORY.md](docs/HISTORY.md) | read about curiosities left on the disc and the background |
 | [UPDATES.md](docs/UPDATES.md) | see what changed, release by release |
 
