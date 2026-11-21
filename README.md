@@ -348,8 +348,14 @@ banks, every cutscene voice line) come out of `browse --kinds music,audio` and
 ![The kit's window: a card per command, the dump card open, the environment panel on the right](docs/images/front/gui-window.png)
 
 `python gui.py`, or a double-click on a launcher, opens this page on
-127.0.0.1. There is one card per command, 22 in all, built from `cli.py`'s own
-parser, so a new command appears on its own; each field gets a picker for disc
+127.0.0.1. There is one card per command, 22 in all, grouped by goal:
+**Start here** (unpack the discs, check them, convert to files you can open),
+then look at one thing, change pictures, change text, fonts and whole files,
+translate into a new alphabet, and developer tools. Each card says in plain
+words what it needs and what it makes, and after a run where the output went,
+with a button that shows it in Finder or Explorer; cards that edit the game are
+marked "new disc copy". The cards are built from `cli.py`'s own parser, so a
+new command appears on its own; each field gets a picker for disc
 images and folders, "Show command" prints the command line it will run, and
 the output streams into the log on the right. The panel lists the discs found
 next to the kit and in the usual folders, and which optional tools are

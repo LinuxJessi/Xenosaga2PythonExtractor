@@ -431,6 +431,10 @@ def cmd_texture_import(args) -> int:
         print("texture-import needs --out (a new file; the input image is never patched), "
               "or --dry-run / --verify-roundtrip", file=sys.stderr)
         return 2
+    if not (args.tree or args.textures or args.xtx or args.models or args.verify_roundtrip):
+        print("texture-import needs --tree (the copy of your browse folder with the edited PNGs), "
+              "or --textures / --xtx / --models", file=sys.stderr)
+        return 2
     return teximport.run_args(args)
 
 
