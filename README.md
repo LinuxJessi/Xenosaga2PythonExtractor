@@ -18,6 +18,67 @@ and the [Episode III extractor](https://github.com/LinuxJessi/Xenosaga3PythonExt
 built the same way, with code borrowed from both where the formats are shared
 (each borrowed module says so at the top).
 
+## Gallery
+
+*New here? [docs/TOUR.md](docs/TOUR.md) walks through everything the kit does, with examples.*
+
+Every picture below is a `.glb` the kit wrote, rendered in Blender, textured as
+the game stores it. Nothing is retouched; the figures stand in the bind pose
+because the motion files are not decoded. Source models are under
+`model/char/pc`, `model/char/npc` and `model/map`; the render script is
+[docs/gallery/render_gallery.py](docs/gallery/render_gallery.py).
+
+### Playable characters
+
+| <img src="docs/images/gallery/kosmos00.jpg" width="140" alt="KOS-MOS"> | <img src="docs/images/gallery/shion00.jpg" width="140" alt="Shion"> | <img src="docs/images/gallery/jr00.jpg" width="140" alt="Jr."> | <img src="docs/images/gallery/jin00.jpg" width="140" alt="Jin"> | <img src="docs/images/gallery/chaos00.jpg" width="140" alt="Chaos"> | <img src="docs/images/gallery/momo00.jpg" width="140" alt="MOMO"> | <img src="docs/images/gallery/ziggy00.jpg" width="140" alt="Ziggy"> |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| KOS-MOS<br>`kosmos00` | Shion<br>`shion00` | Jr.<br>`jr00` | Jin<br>`jin00` | Chaos<br>`chaos00` | MOMO<br>`momo00` | Ziggy<br>`ziggy00` |
+
+### Notable NPCs
+
+Captions are the model file names; the kit does not carry character names for these.
+
+| <img src="docs/images/gallery/albelt00.jpg" width="140" alt="albelt00"> | <img src="docs/images/gallery/gaignun00.jpg" width="140" alt="gaignun00"> | <img src="docs/images/gallery/yuri00.jpg" width="140" alt="yuri00"> | <img src="docs/images/gallery/febronia00.jpg" width="140" alt="febronia00"> | <img src="docs/images/gallery/kirsch00.jpg" width="140" alt="kirsch00"> |
+| :---: | :---: | :---: | :---: | :---: |
+| `albelt00` | `gaignun00` | `yuri00` | `febronia00` | `kirsch00` |
+
+| <img src="docs/images/gallery/helmer00.jpg" width="140" alt="helmer00"> | <img src="docs/images/gallery/miyuki00.jpg" width="140" alt="miyuki00"> | <img src="docs/images/gallery/virgil00.jpg" width="140" alt="virgil00"> | <img src="docs/images/gallery/pope00.jpg" width="140" alt="pope00"> |
+| :---: | :---: | :---: | :---: |
+| `helmer00` | `miyuki00` | `virgil00` | `pope00` |
+
+### Environments
+
+| | |
+|---|---|
+| <img src="docs/images/gallery/E2_MIL12.jpg" width="440" alt="E2_MIL12"><br>`E2_MIL12` | <img src="docs/images/gallery/E2_MOM11.jpg" width="440" alt="E2_MOM11"><br>`E2_MOM11` |
+| <img src="docs/images/gallery/E2_KUK06.jpg" width="440" alt="E2_KUK06"><br>`E2_KUK06` | <img src="docs/images/gallery/E2_UZU01.jpg" width="440" alt="E2_UZU01"><br>`E2_UZU01` |
+| <img src="docs/images/gallery/E2_SUI06.jpg" width="440" alt="E2_SUI06"><br>`E2_SUI06` | |
+
+Maps are shown from a raised three-quarter view with their sky shells hidden
+and back faces culled, so the outer walls do not hide the rooms.
+
+### Audio samples
+
+Short previews decoded by the kit from Disc 1 (25-second BGM excerpts,
+full-length effects and voice lines). GitHub plays these on click or downloads them.
+
+| | Source | Sample |
+|---|---|---|
+| BGM | `music/001_milchia` | [bgm_001_milchia.mp3](docs/samples/bgm_001_milchia.mp3) |
+| BGM | `music/005_morgenroete` | [bgm_005_morgenroete.mp3](docs/samples/bgm_005_morgenroete.mp3) |
+| BGM | `music/009_lost_jerusalem` | [bgm_009_lost_jerusalem.mp3](docs/samples/bgm_009_lost_jerusalem.mp3) |
+| BGM | `music/103_kukai` | [bgm_103_kukai.mp3](docs/samples/bgm_103_kukai.mp3) |
+| BGM | `music/111_moby-dick` | [bgm_111_moby-dick.mp3](docs/samples/bgm_111_moby-dick.mp3) |
+| Jingle | `music/203_game_over` (7 s, whole) | [bgm_203_game_over.mp3](docs/samples/bgm_203_game_over.mp3) |
+| Sound effect | `CFS_SE.vsf` cue CFS00004 | [sfx_CFS_SE_CFS00004.mp3](docs/samples/sfx_CFS_SE_CFS00004.mp3) |
+| Sound effect | `CFS_SE.vsf` cue CFS00010 | [sfx_CFS_SE_CFS00010.mp3](docs/samples/sfx_CFS_SE_CFS00010.mp3) |
+| Movie voice line | scene `S05_06_05`, line 04 | [voice_S05_06_05_04_KOS_MOS.mp3](docs/samples/voice_S05_06_05_04_KOS_MOS.mp3) |
+| Movie voice line | scene `S05_06_05`, line 05 | [voice_S05_06_05_05_Thank_you.mp3](docs/samples/voice_S05_06_05_05_Thank_you.mp3) |
+| Movie voice line | scene `S05_02_00`, line 07 | [voice_S05_02_00_07_Oh_be_a_man_already.mp3](docs/samples/voice_S05_02_00_07_Oh_be_a_man_already.mp3) |
+
+The full sets (music, sound banks, every cutscene voice line) come out of
+`browse --kinds music,audio` and `dialogue --voice` on your own disc.
+
 ## Running it
 
 Python 3.9 or newer, and numpy (the music renderer needs it). The app

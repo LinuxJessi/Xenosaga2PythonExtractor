@@ -19,6 +19,41 @@ One model without dumping the disc first:
 python cli.py model --iso "Disc 1.iso" --path 'model\char\pc\kosmos00.pxy' --out kosmos00.glb
 ```
 
+## First look: three things that trip people up
+
+* **It looks grey.** Blender opens in Solid shading, which ignores textures.
+  Switch to **Material Preview**: the third of the four shading balls at the
+  top right of the 3D view (or `Z`, then Material Preview).
+* **It is covered in balls, or there is a stray sphere.** Blender's glTF
+  importer gives every bone a custom shape, an Icosphere kept in a hidden
+  collection named `glTF_not_exported`. That sphere is not part of the model.
+  Hide it by turning off **Bones** in the Overlays menu, or select the
+  armature and set Object Data ▸ Viewport Display ▸ Display As to **Stick**.
+* **It is off screen or tiny.** Press `Home` (View ▸ Frame All) with the mouse
+  over the 3D view. Laptops without a numpad can use the View menu for the
+  front/side views.
+
+To open a model from the terminal, `open -a Blender --args --python …` does
+nothing when Blender is already running. A file that always opens is a
+`.blend` built in the background:
+
+```sh
+blender --background --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath='kosmos00.glb')
+for ob in bpy.data.objects:
+    if ob.type == 'ARMATURE':
+        ob.data.display_type = 'STICK'
+        for b in ob.pose.bones: b.custom_shape = None
+bpy.ops.wm.save_as_mainfile(filepath='kosmos00.blend')
+"
+open kosmos00.blend
+```
+
+(Seen with Blender 5.4 alpha on USA Disc 1's `kosmos00.glb`: one armature, 11
+meshes, 14 textures inside the file.)
+
 ## What you get
 
 * The mesh, its UVs and its textures (inside the `.glb`, nothing to relink).
