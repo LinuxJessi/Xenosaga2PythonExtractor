@@ -236,6 +236,24 @@ length. Not reproduced: the simulated hair and cloth, the visibility lists
 (which hide nothing on this disc) and the game's real-time rate.
 [MOTION.md](MOTION.md), [BLENDER.md](BLENDER.md).
 
+## 2026-11-20: edited textures back into the disc (`texture-import`)
+
+Paint over PNGs in a copy of the `browse` folder, or over the images of a
+model in Blender, and `texture-import` writes the ones that changed into a
+copy of the disc. A PNG equal to the disc is ignored (colours under alpha 0
+count as equal), so a sparse tree works. Every other copy of the same pixels
+on the disc gets the edit (KOS-MOS's hair is the same picture in four files
+under two names), shared palettes keep the other textures' colours, re-listed
+entries ride along, smaller mip levels are rebuilt, and the title menu words
+can be edited (`--grow` when the sheet no longer fits). Writes go through
+`repack.patch_copy` and are decoded again from the new image.
+`--verify-roundtrip` re-encodes all 3,104 texture pages and 73 UI sheets of
+Disc 1 byte-identically. New modules `pngread.py`, `texenc.py`,
+`teximport.py`; `.glb` images are now named after their PNG files; `dump`
+handles objects relocated by `--grow`. Not yet seen in the running game.
+[MODDING.md](MODDING.md#editing-textures-texture-import), FORMATS.md
+(strip headers, mip chains, the alpha inverse).
+
 ## 2026-11-10 (later): fixes from the translation review
 
 Four outside models reviewed the text work; every point and what was done is

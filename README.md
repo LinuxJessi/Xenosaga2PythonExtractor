@@ -119,6 +119,7 @@ python cli.py recolor     --iso "Disc 1.iso" --out pink.iso          # KOS-MOS's
 python cli.py lang-scan   --iso "Disc 1.iso" --text tr/ --font F.ttf --script Arab --rtl --out fonts/   # new alphabets
 python cli.py lang-encode --text tr/ --glyphset fonts/glyphset.json --out tr-enc/ --width-kind bank=360
 python cli.py lang-preview --glyphset fonts/glyphset.json --text "..." --out line.png
+python cli.py texture-import --iso "Disc 1.iso" --tree edited/ --out modded.iso   # edited PNGs / .glb images back, every copy
 python cli.py self-test
 ```
 
@@ -190,6 +191,11 @@ its input, and produces a complete image or none.
 no longer fits its slot on the disc, and patches a copy of the disc in place,
 reading every write back. Lines may grow or shrink inside the slot. A
 same-length edit changes exactly the edited bytes of the image (checked).
+`texture-import` takes a copy of the `browse` folder with some PNGs painted
+over (textures, UI sheets, or the images inside a model's `.glb` after a trip
+through Blender) and writes back only the ones that changed, into every copy
+of the same pixels on the disc, keeping shared palettes intact for the other
+textures; every write is decoded again from the new image.
 Checked in PCSX2: a recoloured title menu, and subtitle files rewritten and
 relocated past the end of the image (docs/MODDING.md).
 
@@ -253,6 +259,11 @@ Changes: [docs/UPDATES.md](docs/UPDATES.md).
   models come out mirrored, the colour scale and the alpha modes have not
   been checked against the running game ([docs/BLENDER.md](docs/BLENDER.md)).
 * Two multi-palette menu sheets (`yosikawa\obj01.xtx`, `ctrl01.xtx`).
+* `texture-import` is verified on disc copies, not yet in the running game
+  (the PCSX2 check of the demo is pending), and the twelve UI sheets drawn
+  with a guessed palette cannot be written. When the other textures of a
+  shared palette use every slot (45.6% of the cases for 256-colour palettes),
+  an edit can only use the existing colours unless `--palette joint` is given.
 * Music: the renders follow the driver and the SPU2 and sit close to a game
   rip on the five songs compared, but portamento, the pitch envelope, the
   driver's volume sweeps and the songs' loop points are not modelled, and the

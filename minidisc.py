@@ -241,6 +241,16 @@ def self_test() -> int:
               "a failure in the middle leaves an existing output as it was and removes the partial file")
         check(refused(td / "new.iso", _fail_after_copy=boom) and not (td / "new.iso").exists(),
               "... and creates no output when there was none")
+        seen = []
+
+        def verify_fails(tmp):
+            seen.append(read(tmp, "top.bin"))
+            raise RuntimeError("the caller's verification failed")
+
+        check(refused(out, check=verify_fails) and seen == [b"t" * 9] and out.read_bytes() == good
+              and not (td / "out.iso.partial").exists()
+              and refused(td / "new2.iso", check=verify_fails) and not (td / "new2.iso").exists(),
+              "a failed caller check (run on the finished partial copy) publishes nothing")
         check(not refused(out) and out.read_bytes() == good, "a second run over an existing output replaces it")
         try:
             with contextlib.redirect_stdout(io.StringIO()):

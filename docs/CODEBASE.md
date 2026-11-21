@@ -46,7 +46,8 @@ The Episode I kit's rules, kept (the first one with three packages added):
                             ├─ lang-scan / lang-encode / lang-preview ─► langpack.py ─► glyphs.py, font.py, exetext.py
                             ├─ exe-export / exe-import ─► exetext.py ─► repack.py (plain ISO files)
                             ├─ text-coverage ─► coverage.py ─► textpack.py, exetext.py
-                            └─ patch / recolor ─► repack.py, recolor.py
+                            ├─ patch / recolor ─► repack.py, recolor.py
+                            └─ texture-import ─► teximport.py ─► texenc.py, pngread.py, txy.py, xtx.py, repack.py
 ```
 
 ## The modules
@@ -84,6 +85,9 @@ The Episode I kit's rules, kept (the first one with three packages added):
 | `smallfiles.py` | packs, title logos, the save icon, the battle database, map/actor tables |
 | `repack.py` | writes objects back into a disc copy (same size, or grown and moved); plain ISO files in place (`fs_replacements`) |
 | `recolor.py` | hue-shifts named textures in every copy on a disc |
+| `pngread.py` | reads any ordinary PNG to RGBA (standard library and numpy): every colour type, depth, filter, Adam7 |
+| `texenc.py` | encodes edited pictures back into a txy block in place: shared-palette solver, quantiser, twins, refusals |
+| `teximport.py` | `texture-import`: the edited tree, the disc scan, the sweep, UI sheets and .glb images, write and verify |
 | `gui.py` | the local web GUI |
 | `toolfind.py` | finds ffmpeg: the copy bundled under `tools/` first, then PATH |
 | `build.py` | builds the double-click bundle with PyInstaller (`packaging/`) |

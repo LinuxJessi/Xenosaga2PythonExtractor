@@ -66,6 +66,164 @@ ARX-compressed; the kit decompresses, edits and recompresses it.
 
 Models live in chain 0, which is on both discs: patch each disc you play.
 
+## Editing textures: `texture-import`
+
+```sh
+python cli.py browse --out out/ --kinds textures,xtx,models       # the PNGs and .glb files to edit
+cp -R out/browse edited/                                          # edit PNGs in the copy
+python cli.py texture-import --iso "Disc 1.iso" --tree edited/ --dry-run
+python cli.py texture-import --iso "Disc 1.iso" --tree edited/ --out modded.iso --preview prev/ [--grow]
+python cli.py texture-import --iso "Disc 1.iso" --verify-roundtrip  # writes nothing: a self-check on the disc
+```
+
+Paint over any PNG `browse` wrote and give the folder back. The command
+compares every PNG with what the disc decodes to and writes only the ones
+that differ, into a copy of the disc. Nothing else needs to be in the folder:
+a tree holding just the three PNGs you edited works the same as the whole
+`browse` output. The folder itself is never written to.
+
+**The tree.** `--tree` is a `browse` folder (with `textures_png/`, `xtx/` and
+`models/` under it) or a `textures_png` folder on its own; `--textures`,
+`--xtx` and `--models` point at those folders separately. Paths and file
+names must be the ones `browse` writes: `textures_png/chain0/<path>/<file>.txy/NNN_<name>.png`
+for a texture page, `textures_png/_embedded/chain0/<file>/<0xoffset>/NNN_<name>.png`
+for a page inside an effect file, `xtx/chain0/<path>.xtx.png` for a UI sheet,
+`models/chain0/<path>.glb` for a model. NNN is the entry number. If a file
+name does not match the entry it names (a renamed copy, or a tree written by
+another kit revision) or a PNG has another size, the whole import stops
+before anything is written and lists every such file. Delete or rename
+stray PNGs (`notes.png`, `copy of ...`) out of the tree.
+
+**What counts as unchanged.** A PNG is unchanged when every pixel equals the
+disc's decode, with one allowance: pixels whose alpha is 0 count as equal
+whatever RGB they carry, because paint programs often zero the colour of
+transparent pixels. Alpha is compared after snapping to the values the PS2
+can show (below).
+
+**The sweep.** The same picture is stored many times on the disc, often under
+other names. KOS-MOS's hair is `kosmos00_hair_col` in `kosmos00.txy` and
+`kosmos01_hair_col` in `kosmos01.txy`, `kosmos02.txy` and `kosmos03.txy`,
+pixel for pixel the same picture with its palette at another place in each
+file. By default (`--sweep pixels`) every entry anywhere on the disc
+(standalone pages and pages inside effect files) whose picture equals the
+edited entry's original picture gets the edit too, each encoded in its own
+file's palette. Editing `000_kosmos00_hair_col.png` therefore changes all four
+files. Two exceptions keep this from going wrong: a picture of a single
+flat colour is only swept to entries of the same name, and every swept group
+is printed with its file count and the names in it. Look at that list in a
+`--dry-run`: one 32x32 reflection map is stored 1,512 times in 80 files under
+many names (`gt01_bodyrf`, `gt03_legrf`, ...), so editing it edits all of
+them. `--sweep name` sweeps only to entries of the same name; `--sweep none`
+edits only the entries whose PNGs changed. Two PNGs that start from the same
+picture but were edited differently are refused under the default sweep.
+UI sheets are not swept (each is its own file).
+
+**Re-listed entries.** Some entries are listed twice or three times with the
+same rectangle and palette (the duplicate flag at +0x28; `browse` names them
+`..._dup1.png`): `kosmos00_ude` is entries 5, 7 and 21. They are one picture
+in the file, so editing one changes all; the others are reported as
+"ride-along". Editing two of them differently is refused.
+
+**Palettes.** Most textures are 256- or 16-colour pictures, and a palette is
+often shared: `kosmos00_ude` and `kosmos00_body` are different pictures that
+read the same palette at (208, 80). `--palette auto` (the default) never
+changes a colour another texture uses: new colours go into slots no other
+texture uses, exactly when they fit (a recolour of a picture with few
+colours is lossless), otherwise the edited picture is quantised into those
+free slots around the frozen ones. When the other textures use every slot,
+the palette cannot change, and the changed pixels take the nearest existing
+colour; the command warns, names the other textures and gives the PSNR. On
+Disc 1 that happens often: of the 32,114 ways to edit one picture of a shared
+256-colour palette, 45.6% leave no free slot and 71.3% fewer than eight
+(median one free slot); for shared 16-colour palettes 95.7% leave none.
+`--palette joint` re-quantises the edited picture together with the other
+textures of the palette into all slots; those textures then change slightly
+and are reported as "joint-changed". `--palette keep` never touches a
+palette. `--dither fs` applies Floyd-Steinberg to the quantised pixels only
+(RGB error, never alpha). Measured on the research cases with the shipped
+encoder (whole-picture PSNR after a synthetic edit with hundreds of new
+colours): `kosmos00_hair_col` on its own palette 46.1 dB; `kosmos00_ref1`
+on a shared palette 39.6 dB (auto, siblings unchanged), 41.2 dB (joint),
+28.7 dB (keep); `brealm00_douback` 55.1 dB (auto). The report CSV gives
+the PSNR of every changed entry over its changed pixels.
+
+**Alpha.** The PS2 stores alpha as 0-128 (128 = opaque) and the kit shows it
+doubled, capped at 255. An edited alpha is stored as min(128, (A + 1) / 2
+rounded down), so the alphas that come back exactly are 0, 2, 4, ..., 254 and
+255. A pixel or palette colour that does not change keeps its stored bytes
+exactly, including the title sheet's raw alpha values above 128.
+
+**Mip levels.** Some map textures carry smaller copies of themselves (entry
+word +0x34 numbers them 1-6 under a base marked 0xFFFFFFFF; same name and
+palette), and the models' draw state asks the GS for them (see FORMATS.md).
+By default (`--mips rebuild`) the smaller levels of an edited base are
+rebuilt from the edit with a 2x2 box filter (RGB weighted by alpha) and
+written in the same palette pass; `--mips keep` leaves them, and the
+command says how many edited entries have levels.
+
+**UI sheets.** Sheets whose palette the kit has solved are written: the 50
+citizen portraits and 18 item cards (cut by their frame mask, as `browse`
+shows them; pixels the mask hides cannot change and keep their colours),
+the three frame masks, `omiya\botan`, and the true-colour title words
+`yajima\titleobj.xtx`. The ten scan-palette sheets and two grey sheets are
+refused when edited ("palette not solved") and ignored when not. A sheet and
+the frame mask that cuts it are not edited in the same run: the sheet's PNG
+was cut by the old mask, so the command refuses the pair. Import the mask
+alone, run `browse` on the new disc, then edit the sheet.
+
+**Models.** Images inside a `.glb` from `browse` or `model` are named after
+their PNG files (`009_kosmos00_mune`), so a model edited in Blender maps back
+by name: File > Import > glTF 2.0, paint or replace an image, File > Export >
+glTF 2.0 (.glb), then put the file at `models/chain0/<path>.glb` in the tree.
+Checked with Blender 5.4.0 on 2026-11-20: a plain import and export with
+default settings comes back as 0 changed entries (the images are re-embedded
+byte for byte, only their order changes); painting a 32x32 square on one
+image changes exactly those 1,024 pixels. A `.NNN` tail Blender adds to a
+repeated image name is ignored. Files exported before images were named this
+way (entry names, which repeat) are mapped by entry names that are unique
+among the entries the model uses. Image order is never used, because Blender
+writes images in its own order: an image whose name matches nothing (for
+example one replaced in Blender, which takes the new file's name) and two
+images that map to the same entry stop the import. Rename such an image to
+its PNG file's stem, or export the model again with `browse`.
+
+**Size.** Texture pages never change size (index bytes and palette words are
+rewritten in place). Only the three ARX-compressed objects can outgrow their
+slot. `yajima\titleobj.xtx` with a gradient painted over its letters
+recompresses to 43,944 bytes in a 28,672-byte slot; the command says so
+before copying the disc and needs `--grow`, which moves it to the end of the
+image (relocation is proven in the game for a subtitle file; for this sheet it
+is not yet checked).
+
+**Run it once per disc.** Models, effects and the title sheet live in chain 0,
+which is identical on both discs; run the same tree against each disc you
+play. The Disc 1 and Disc 2 reports of the demo are identical.
+
+**Checks.** Before writing, every block is encoded and decoded again with the
+scalar reference decoder; after writing, and before the copy takes the
+`--out` name, every replaced object is read from the new image and decoded: edited, swept, ride-along and joint-changed
+entries must show their planned pictures, every other entry its original
+one, and blocks inside a file that were not edited must be byte-identical.
+If any of this fails, the copy is deleted and nothing is written (an existing
+`--out` stays as it was). The report (`--report`, default
+`<out>.textures.csv`) is written only after a verified copy is in place, or
+on a dry run; it may not name `--out`, `--iso` or any `.iso` file.
+`--verify-roundtrip` encodes every texture on a disc with its own picture as
+the target and checks the bytes come back identical: on Disc 1, 937
+standalone pages, 2,167 embedded pages (69,482 entries) and 73 UI sheets, no
+failure, 55 seconds. A no-op run over the whole `browse` output (114,583 PNGs
+and model images) takes 26 seconds and writes nothing.
+
+**Not yet seen in the running game.** The demo (KOS-MOS's hair with a magenta
+band in all four of her texture files, her arm texture in green, a ring on
+her chest texture through a `.glb`, and the title menu words tinted) is
+written and verified on disc copies only; the PCSX2 boot check is pending.
+Also unverified: whether the engine reads palettes through `cbp` or through
+palx/paly (they agree for every real entry, so in-place writes are right
+either way), how the engine treats the title sheet's alpha values above 128,
+and whether edits inside effect files are accepted (no checksum was found or
+assumed).
+
 ## Text: `text-export` / `text-import`
 
 Banks are rebuilt whole, so lines may grow or shrink inside the bank's slot;

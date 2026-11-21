@@ -707,7 +707,7 @@ def to_glb(p, txy_data=None, x=None, name=None):
         pngs = {}
         for e, w, h, rgba in txy.decode(txy_data):
             if e["i"] in used and e["i"] not in pngs:
-                pngs[e["i"]] = (txy.png_bytes(w, h, rgba), e["name"])
+                pngs[e["i"]] = (txy.png_bytes(w, h, rgba), txy.entry_filename(e, len(t["banks"]) > 1)[:-4])
         images = {i: g.add_image(png, nm) for i, (png, nm) in
                   sorted(pngs.items())}
     else:

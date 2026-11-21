@@ -28,6 +28,9 @@ Usage:
     python cli.py recolor --iso DISC.iso --out PINK.iso [--preset kosmos-hair] [--hue 0.92]
     python cli.py model   --iso DISC.iso --path 'model\\char\\pc\\shion00.pxy' --out shion00.glb
                           [--motion 'motion\\shion00.xap#0,1'] [--slots 0,1] [--face] [--no-motion]
+    python cli.py texture-import --iso DISC.iso --tree EDITED_BROWSE --out MODDED.iso [--dry-run]
+                          [--palette auto|keep|joint] [--sweep pixels|name|none] [--grow]
+    python cli.py texture-import --iso DISC.iso --verify-roundtrip
     python cli.py self-test
 
 ``dump`` writes OUT/dump/chain0|chain1|chain2/<in-game path>. ARX-compressed
@@ -123,7 +126,10 @@ def cmd_dump(args) -> int:
                             head = bytes(block[:16])
                         h.update(block)
                         fh.write(block)
-            bigfile, local = reader.locate(e.byte_offset)
+            try:
+                bigfile, local = reader.locate(e.byte_offset)
+            except ValueError:                   # relocated past the chain by a --grow write
+                bigfile, local = "(relocated)", reader.toc_lba * 2048 + e.byte_offset
             rows.append({
                 "area": f"chain{chain}", "path": e.path, "sector": e.sector, "size": e.size,
                 "compressed": int(e.compressed), "usize": e.usize or "", "sha1": h.hexdigest(),
@@ -418,6 +424,16 @@ def cmd_recolor(args) -> int:
     return recolor.run(args.iso, args.out, rules, args.hue, args.preview, args.dry_run)
 
 
+def cmd_texture_import(args) -> int:
+    import teximport
+
+    if not args.out and not (args.dry_run or args.verify_roundtrip):
+        print("texture-import needs --out (a new file; the input image is never patched), "
+              "or --dry-run / --verify-roundtrip", file=sys.stderr)
+        return 2
+    return teximport.run_args(args)
+
+
 def cmd_text_export(args) -> int:
     from textpack import export_text
 
@@ -526,7 +542,7 @@ def cmd_lang_preview(args) -> int:
     return langpack.run("preview", args)
 
 
-SELF_TESTS = ("region", "font", "toc", "txy", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
+SELF_TESTS = ("region", "font", "toc", "txy", "pngread", "texenc", "teximport", "embedded", "recolor", "sbl", "sb", "vsf", "prj",
               "sniff", "songfx", "spu2synth", "smallfiles", "toolfind", "gui", "dialogue",
               "minidisc", "moviesub", "textcodec", "textpack", "glyphs", "langpack", "exetext",
               "coverage", "vif", "gltf", "xhr", "xap", "pxy", "models_sweep", "vuprog")
@@ -624,6 +640,12 @@ def main(argv=None) -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--xtx", help="colourise this true-colour .xtx instead (e.g. 'yajima\\titleobj.xtx')")
     p.set_defaults(func=cmd_recolor)
+
+    p = sub.add_parser("texture-import", help="write edited PNGs (textures, UI sheets, model .glb images) back "
+                                              "into a copy of the disc")
+    import teximport
+    teximport.add_arguments(p)
+    p.set_defaults(func=cmd_texture_import)
 
     p = sub.add_parser("text-export", help="dialogue and menu text to an editable UTF-8 tree")
     p.add_argument("--iso", required=True)

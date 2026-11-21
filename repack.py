@@ -285,7 +285,7 @@ def same_file(a, b) -> bool:
 
 
 def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
-               verbose: bool = True, grow: bool = False, relocate=(), _fail_after_copy=None,
+               verbose: bool = True, grow: bool = False, relocate=(), check=None, _fail_after_copy=None,
                fs_replacements: Dict[str, bytes] = None) -> List[PatchReport]:
     """Copy ``iso_path`` to ``out_iso`` with the replacements patched in.
 
@@ -300,8 +300,11 @@ def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
       relies on that build's TOC and loaders.
     * The work is done on ``<out>.partial`` in the destination's folder; it
       replaces ``out_iso`` (``os.replace``) only after ``patch_iso`` has written
-      and read back every object. On any error the partial file is removed and
-      an existing ``out_iso`` is left exactly as it was.
+      and read back every object, the ``fs_replacements`` are written, and
+      ``check(partial_path)`` (a
+      caller's own verification of the finished copy, optional) has returned.
+      On any error, including one ``check`` raises, the partial file is removed
+      and an existing ``out_iso`` is left exactly as it was.
     """
     import os
     import shutil
@@ -340,6 +343,8 @@ def patch_copy(iso_path, out_iso, replacements: Dict[Tuple[int, str], bytes],
         reports = patch_iso(tmp, replacements, verbose=verbose, grow=grow, relocate=relocate) if replacements else []
         for name, data in fs_replacements.items():
             patch_fs_file(tmp, name, data, verbose=verbose)
+        if check is not None:
+            check(tmp)
         os.replace(tmp, dst)                         # replaces a link itself, never writes through it
     except BaseException:
         try:
