@@ -1,5 +1,16 @@
 # Updates
 
+## 2026-11-20 (v1.0.0): first public release
+
+* **[FUN-FACTS.md](FUN-FACTS.md)**: sixty-odd things the discs give away,
+  from the staff folders and a quest you cannot fail to the KORG driver's
+  symbols, the unused hard-disk installer, the build order of the demo, the
+  Japanese and the USA releases, and a table of the numbers.
+* **The window** groups its cards by goal (Start here, look at one thing,
+  change pictures, change text, fonts, new alphabets, developer tools); each
+  card says what it needs and makes, and where its output went. New
+  screenshot.
+
 ## 2026-11-20 (release): the front page for everything
 
 The README is rebuilt as a front page for the whole kit: a feature table with
