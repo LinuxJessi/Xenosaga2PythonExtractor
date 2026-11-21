@@ -44,13 +44,18 @@ APP = DIST / f"{NAME}.app"  # macOS only
 
 def _run_selftest(argv) -> bool:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=300)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"  could not run {argv[0]}: {exc}")
         return False
     tail = (r.stdout + r.stderr).strip().splitlines()[-1:] or ["(no output)"]
     print(f"  {' '.join(Path(a).name if i == 0 else a for i, a in enumerate(argv))}: "
           f"exit {r.returncode}, {tail[0]}")
+    if r.returncode:                    # say which checks failed, not only the last line
+        for line in (r.stdout + r.stderr).splitlines():
+            if "FAIL" in line or "Traceback" in line or "Error" in line:
+                print(f"    {line}")
     return r.returncode == 0
 
 
