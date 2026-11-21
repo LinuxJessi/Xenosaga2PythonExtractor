@@ -1,5 +1,30 @@
 # Updates
 
+## 2026-11-20 (night): one release branch, build and demo scripts in the repository
+
+The language suite, text coverage, motion and texture import are merged on
+one branch, with the front page (gallery, tour, audio samples, Blender's
+first look). `cli.py self-test` and `gui.py --self-test` pass.
+
+* **Fixed in the merge:** `glyphs.py` imported `textpack._sjis_hint`, which
+  text coverage replaced with a stricter reading hint; the glyphs and
+  langpack self-tests stopped with an ImportError. The retail reserve keeps
+  its own copy of the old rule, so the room for new glyphs is the same.
+* `repack.patch_copy` takes both `fs_replacements` (executable strings) and
+  `check` (texture import's verification of the finished copy), which runs
+  after the plain files are written.
+* **Scripts in `tools/`** (CODEBASE.md): `tools/langtest/langtest.sh` builds
+  the LANGTEST disc and checks it; `tools/demo/motion.sh` and
+  `tools/demo/texture-import.sh` run the two demos. Each takes the disc
+  images and output folders as arguments. All three were run on the merged
+  branch: the LANGTEST image is byte-identical to the booted rebuild
+  (sha256 5a309d13...) and every check passes
+  ([ALPHABETS.md](ALPHABETS.md#worked-example-the-langtest-disc)); the motion
+  demo's read-back, the Khronos validator (no errors, warnings or infos) and
+  Blender 5.4's import check pass; the texture demo's checks pass on a disc
+  copy (10 changed entries, 8,833 unrelated objects byte-identical, an
+  unedited full tree writes nothing). None of this was booted again.
+
 ## 2026-11-20 (round 4): the user's walk-through of text coverage
 
 * **Reading hints stay on one line.** Seven `exe-export` hints for Japanese

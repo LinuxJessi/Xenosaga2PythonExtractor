@@ -110,11 +110,11 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
      "entries dn_atk02, dn_rsv02 and dn_atk (looked at, 2026-11-20; RESERVE is drawn so that it reads RESERUE, as in "
      "the Japanese build's dn_rsv). SLUS_208.92 names model\\atk.txy and model\\rsv.txy (pointer table at "
      "0x003EB098), but not yosikawa\\atk.txy: whether ATTACKER is ever shown is not known. browse writes PNG; "
-     "texture-import (another branch, not merged) writes standalone txy pages"),
+     "texture-import (checked on disc copies, not yet seen in the game) writes standalone txy pages"),
     ("picture", "battle pop-up words 'Boost Bonus' and 'Stock Bonus'", ("simajiri\\esp\\default.esp",), "export only",
      "texture pages inside an effect file (embedded.py): de_moji01 at 0x14DC0, de_moji02 at 0x15A40 (looked at, "
      "2026-11-20; which screen shows them was not seen in the game). browse writes them under "
-     "textures_png/_embedded; texture-import (another branch, not merged) writes embedded pages"),
+     "textures_png/_embedded; texture-import (checked on disc copies, not yet seen in the game) writes embedded pages"),
     ("picture", "glyph effect: the kanji \u546a \u82e6 \u6bba \u6028 \u59ac \u81ed \u5bd2 \u6697 and the word CRY",
      ("simajiri\\esd\\pe820_004.esd",), "export only",
      "nine texture pages moji01-moji09 inside the effect file (0x1C680-0x56CC0), kept in Japanese by the USA "
@@ -128,7 +128,7 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
      "minor drawn words: shop signs behind some of the 50 citizens ('MADE IN HEAVEN', 'NO! TRESPASSING', "
      "'CLOSED', 'ROBO-FOUNDRY', 'UNUS MUNDUS NEWS', 'WEAPON', ...) and digits on some of the 18 item cards "
      "(looked at, 2026-11-20). browse writes PNG cut by the masks ctz_alpha.xtx / item_alpha.xtx; "
-     "texture-import (another branch, not merged) writes them"),
+     "texture-import (checked on disc copies, not yet seen in the game) writes them"),
     ("picture", "door pictures of the quest board", ("iwase\\img\\door\\doorimg.dat",), "no text",
      "a pack of 18 XTX in its own format (u32 count 0x12, u32 offsets, the first XTX at 0x50); no words in any of "
      "them (looked at, 2026-11-20). browse does not unpack it"),
@@ -144,7 +144,7 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
      "--tex-words and docs/MODDING.md. OCR misses small, stylised and Japanese text, so this is a lower bound. A "
      "survey of entry names (moji, kanban, poster, sign, text, menu, ...) lists 1,302 such entries in 238 files, "
      "embedded blocks included; a name is a hint, not proof of words. "
-     "texture-import (another branch, not merged) writes txy"),
+     "texture-import (checked on disc copies, not yet seen in the game) writes txy"),
     ("video", "staff roll", ("movie\\epstaff.sfd",), "export only",
      "the credits are drawn into the video (frames looked at, 2026-11-20); movie\\en\\EPSTAFF.txt is its dialogue "
      "subtitles, not the credits. Re-encoding video is not part of the kit"),

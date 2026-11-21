@@ -223,7 +223,8 @@ through `lang-scan` and `lang-encode` like the rest of the text.
 `text-coverage` lists every place the game shows text: the text above, with
 its counts, and apart from it the words drawn into pictures and movies (UI
 sheets, the "Story So Far" pages, the staff roll in `EPSTAFF.sfd`), which
-need picture editing and have no checked writer in the kit yet.
+need picture editing: `texture-import` (above) writes texture pages and UI
+sheets; the JPEG pages and the video have no writer in the kit.
 
 ## How it is built
 

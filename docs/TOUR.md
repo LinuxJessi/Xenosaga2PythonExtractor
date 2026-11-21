@@ -13,7 +13,7 @@ below was produced from them.
 [Menus and images](#menus-and-images) · [Fonts](#fonts) · [Dialogue](#dialogue) ·
 [Scripts](#scripts) · [Sound effects and music](#sound-effects-and-music) ·
 [Movies](#movies) · [Small files](#small-files) · [Changing the game](#changing-the-game) ·
-[The window](#the-window) · [Not merged yet](#not-merged-yet)
+[The window](#the-window) · [Also in the kit](#also-in-the-kit)
 
 ## Setup
 
@@ -98,8 +98,8 @@ Things to know before you open one:
   **Material Preview** (the third shading ball) or it looks grey, and hide the
   **Bones** overlay if the importer's bone shapes look like balls. The steps are
   in [BLENDER.md](BLENDER.md).
-* The figures stand in the bind pose. Motion files are not decoded on `main`
-  (see [Not merged yet](#not-merged-yet)).
+* The figures here stand in the bind pose. The motion clips come with each
+  model as animations ([MOTION.md](MOTION.md)).
 * Maps include their sky domes. If a map looks boxed in or tiny, hide the
   biggest objects; `docs/gallery/render_gallery.py` shows one way.
 
@@ -386,20 +386,21 @@ Mac (`launch.bat` on Windows, `launch.sh` on Linux). It opens a local page with
 one card per command above. The cards are built from the command line itself, so
 new commands appear on their own.
 
-## Not merged yet
+## Also in the kit
 
-Work in progress on other branches of the repository. None of it is part of the
-kit on `main`, and details may change before it is merged.
+Merged after this tour was written; each has its own page, and the tour has no
+section with pictures for them yet.
 
-* **Motion** (branch `motion`): the animation clips (`.xap`) read as Blender
-  animations, with a `MOTION.md`.
-* **A language suite** (branches `lang-core`, `lang-exetext`, `lang-langtest`,
-  merged together on `langsuite`): alphabets for other scripts, text inside the
-  executable (`exe-export` / `exe-import`), and a test disc that has been booted
-  in an emulator.
-* **Text coverage** (branch `text-coverage`): control-code prompts, quest fields
-  and the memory-card title.
-* **Texture import** (branch `texture-import`): putting edited textures back into
-  a disc.
-
-When these merge, this page should grow a section each.
+* **Motion**: the animation clips (`.xap`, `.fap`) come with every model as
+  Blender animations ([MOTION.md](MOTION.md)).
+* **New alphabets and executable strings**: `lang-scan`, `lang-encode` and
+  `lang-preview` for scripts the USA font never had, and `exe-export` /
+  `exe-import` for the strings inside the executable. A test disc with Arabic,
+  Hindi, Georgian and Amharic was booted in PCSX2; one surface failed and one
+  was not reached ([ALPHABETS.md](ALPHABETS.md), [MODDING.md](MODDING.md)).
+* **Text coverage**: `text-coverage` lists every place the game shows text and
+  what the kit does with it; control-code prompts, quest fields and the
+  memory-card title are editable ([MODDING.md](MODDING.md)).
+* **Texture import**: `texture-import` puts edited PNGs, UI sheets and model
+  images back into a copy of the disc. Checked on disc copies, not yet seen in
+  the running game ([MODDING.md](MODDING.md#editing-textures-texture-import)).
