@@ -55,7 +55,7 @@ def _run_selftest(argv) -> bool:
     if r.returncode:                    # say which checks failed, not only the last line
         for line in (r.stdout + r.stderr).splitlines():
             if "FAIL" in line or "Traceback" in line or "Error" in line:
-                print(f"    {line}")
+                print("    " + line.encode("ascii", "backslashreplace").decode("ascii"))
     return r.returncode == 0
 
 
