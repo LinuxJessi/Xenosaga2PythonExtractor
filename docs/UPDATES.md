@@ -35,10 +35,21 @@ window, and a list of the demo scripts in place of its "Also in the kit" list.
   files and the tables of contents). None of it was booted again.
 * **Noticed, not changed:** in `text-coverage --verify`, if `exe-export`
   itself fails, the executable no-change check is skipped without a
-  problem being recorded (it did not fail in these runs). The coverage
-  table still calls the UI sheets and the title menu words "export only"
-  and says there is no PNG-to-XTX import; `texture-import` writes the
-  title sheet and the sheets whose palette is solved.
+  problem being recorded (it did not fail in these runs).
+* **After review:** the coverage table's notes for the UI sheets and the
+  title menu words said there is no PNG-to-XTX import; they now say that
+  `texture-import` writes the title sheet and the sheets whose palette is
+  solved (checked on disc copies, not seen in the game). The rows keep the
+  status `export only`, now defined as "no text tool writes it back", and
+  the README says so. The README's voice samples are real-time event lines,
+  not movie lines; its dialogue count is 8,318 lines of five kinds, not
+  8,318 spoken lines; it says which LANGTEST captures are of the first
+  build. The tour's movie section gives the real sizes (only the `.sfd`
+  cutscenes are 512×448) and counts (140 MP4 and 657 WAV), its folder table
+  counts only what the kit writes (944 `.glb`, 67,271 PNG), and its font
+  section shows what `font-extract` writes. The game-over jingle sample (a
+  whole track) and an unreferenced crop of the Georgian menu capture are
+  gone.
 
 ## 2026-11-20 (night): one release branch, build and demo scripts in the repository
 

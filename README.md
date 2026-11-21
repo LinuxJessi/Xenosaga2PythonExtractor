@@ -92,7 +92,7 @@ claim has a `--self-test`, and `python cli.py self-test` runs them all.
 | **Executable strings** | `exe-export`, `exe-import` | the strings in the game's code (`Saving...`, the memory-card and disc-change prompts): 3,498 in SLUS_208.92, 678 in OV01, 47 in OV02, rewritten in place | [MODDING](docs/MODDING.md#executable-strings-exe-export--exe-import) |
 | **Text coverage** *(new)* | `text-coverage --verify` | every place the game shows text, counted from your discs, and what the kit does with it; `--verify` checks that every unedited tree imports as no change | [MODDING](docs/MODDING.md#what-is-covered-text-coverage) |
 | **New alphabets** *(new)* | `lang-scan`, `lang-encode`, `lang-preview` | a translation shaped with HarfBuzz, its glyphs drawn into both fonts, the text written as glyph codes, right-to-left lines ordered and wrapped; Arabic, Hindi and Amharic seen in the running game | [ALPHABETS](docs/ALPHABETS.md) |
-| **Dialogue in play order** | `dialogue --voice` | 8,318 spoken lines from 363 scripts with speakers, branches and choices; the 45 movies' subtitles and 80 real-time events as `.srt`; one WAV per timed voice line | [DIALOGUE](docs/DIALOGUE.md) |
+| **Dialogue in play order** | `dialogue --voice` | 8,318 lines (text boxes, messages, choices, timed event lines, battle lines) from 363 scripts with speakers and branches; the 45 movies' subtitles and 80 real-time events as `.srt`; one WAV per timed voice line | [DIALOGUE](docs/DIALOGUE.md) |
 | **Scene scripts** | `sb`, `natives`, `browse --kinds scripts` | all 465 scene and map scripts disassembled, every native call named (`talk.msgDtl`, `runtime.mapChange`), every spoken line inline | [SCRIPTS](docs/SCRIPTS.md) |
 | **Music** | `browse --kinds music` | the 31 field and menu songs as MIDI, a SoundFont 2 from the song's own samples, and a WAV rendered from KORG's driver rules and the SPU2's reverb (`spu2synth.py`) | [MUSIC](docs/MUSIC.md) |
 | **Sound effects** | `browse --kinds audio` | 3,733 named samples from 1,074 KORG banks, as WAV with loop points | [FORMATS](docs/FORMATS.md) |
@@ -232,7 +232,11 @@ disc. The room is 246 codes, 181 of them proportional.
 
 A test disc (LANGTEST) with Arabic, Hindi, Georgian and Amharic was built with
 kit commands only (`tools/langtest/langtest.sh`) and played in PCSX2 2.9.175.
-These are captures from it, drawn by the game itself:
+These are captures from it, drawn by the game itself. The disc was booted
+twice, a first build and a rebuild after review fixes; the Arabic and Hindi
+captures are of the rebuild, the two Amharic ones of the first build (the
+rebuild draws the same Amharic bitmaps, on codes one cell further on, and
+was not captured there):
 
 | | |
 |---|---|
@@ -248,7 +252,7 @@ Hindi movie subtitles and cutscene lines, Amharic on the save screen and in
 `Saving...`. **Failed:** the party names of the field menu draw blank, in any
 script; the name boxes are at fault, not the codes (the Georgian codes draw in
 the field box on a test build). **Not reached:** the battle screen. The
-merged release builds a LANGTEST image byte-identical to the one that was
+merged release builds a LANGTEST image byte-identical to the rebuild that was
 played, and its verifier passes (16 translated strings exact, 12,779 untouched
 strings and 4,222 executable strings unchanged).
 
@@ -275,7 +279,9 @@ the reason. The tree carries a manifest of the disc it came from, so
 `--rebase`. Executable strings go last (`exe-import`), because afterwards the
 executable is no longer the retail one.
 `text-coverage` lists every place the game shows text and what the kit does
-with each, counted from your discs:
+with each, counted from your discs (it marks the picture rows `export only`,
+since no text tool writes them, and says in each row's note when
+`texture-import` does):
 
 ```sh
 python cli.py text-coverage --iso "Disc 1.iso" --iso "Disc 2.iso" --verify
@@ -314,12 +320,11 @@ full-length effects and voice lines). GitHub plays these on click or downloads t
 | BGM | `music/009_lost_jerusalem` | [bgm_009_lost_jerusalem.mp3](docs/samples/bgm_009_lost_jerusalem.mp3) |
 | BGM | `music/103_kukai` | [bgm_103_kukai.mp3](docs/samples/bgm_103_kukai.mp3) |
 | BGM | `music/111_moby-dick` | [bgm_111_moby-dick.mp3](docs/samples/bgm_111_moby-dick.mp3) |
-| Jingle | `music/203_game_over` (7 s, whole) | [bgm_203_game_over.mp3](docs/samples/bgm_203_game_over.mp3) |
 | Sound effect | `CFS_SE.vsf` cue CFS00004 | [sfx_CFS_SE_CFS00004.mp3](docs/samples/sfx_CFS_SE_CFS00004.mp3) |
 | Sound effect | `CFS_SE.vsf` cue CFS00010 | [sfx_CFS_SE_CFS00010.mp3](docs/samples/sfx_CFS_SE_CFS00010.mp3) |
-| Movie voice line | scene `S05_06_05`, line 04 | [voice_S05_06_05_04_KOS_MOS.mp3](docs/samples/voice_S05_06_05_04_KOS_MOS.mp3) |
-| Movie voice line | scene `S05_06_05`, line 05 | [voice_S05_06_05_05_Thank_you.mp3](docs/samples/voice_S05_06_05_05_Thank_you.mp3) |
-| Movie voice line | scene `S05_02_00`, line 07 | [voice_S05_02_00_07_Oh_be_a_man_already.mp3](docs/samples/voice_S05_02_00_07_Oh_be_a_man_already.mp3) |
+| Event voice line | real-time event `S05_06_05` (`sc8047`), line 04 | [voice_S05_06_05_04_KOS_MOS.mp3](docs/samples/voice_S05_06_05_04_KOS_MOS.mp3) |
+| Event voice line | real-time event `S05_06_05` (`sc8047`), line 05 | [voice_S05_06_05_05_Thank_you.mp3](docs/samples/voice_S05_06_05_05_Thank_you.mp3) |
+| Event voice line | real-time event `S05_02_00` (`sc8046`), line 07 | [voice_S05_02_00_07_Oh_be_a_man_already.mp3](docs/samples/voice_S05_02_00_07_Oh_be_a_man_already.mp3) |
 
 The BGM is the kit's own render of the game's MIDI through its own samples,
 not a recording; [docs/MUSIC.md](docs/MUSIC.md) says how it was checked

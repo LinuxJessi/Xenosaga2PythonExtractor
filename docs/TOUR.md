@@ -44,8 +44,8 @@ What `browse` writes, by folder:
 
 | Folder | What is in it | Files (both USA discs) |
 |---|---|---|
-| `models/` | every model as `.glb` | 946 |
-| `textures_png/` | every texture page as PNG | 67,278 |
+| `models/` | every model as `.glb` | 944 |
+| `textures_png/` | every texture page as PNG | 67,271 |
 | `xtx/` | the UI sheets | 85 |
 | `images/` | full-screen JPEGs (synopsis, game over, map pictures) | 36 |
 | `fonts/` | font sheets and metrics | 10 |
@@ -53,7 +53,7 @@ What `browse` writes, by folder:
 | `scripts/` | every scene script, disassembled | 465 |
 | `audio/` | sound effects as WAV | 3,733 |
 | `music/` | the 31 songs: MIDI, SoundFont and rendered WAV | 124 |
-| `movies/` | cutscenes as MP4 | 797 |
+| `movies/` | cutscenes and monitor clips as MP4, `.adx` audio as WAV | 140 MP4, 657 WAV |
 | `small/` | boot screens, title logos, battle strings, an index of side files | 212 |
 
 Pick parts with `browse --kinds models,text,music` and so on; see
@@ -174,21 +174,24 @@ INSTALL, ...).*
 python cli.py font-extract --iso "Disc 1.iso" --out font/
 ```
 
-You get the four glyph sheets of each font as PNG, a table of proportional
+You get each font file, its four glyph sheets as PNG, a table of proportional
 widths, and the byte-to-cell table that says which character each byte draws.
 
 <img src="images/tour/font_sheet.png" width="360" alt="font0 glyph sheet 0">
 
-*`fonts/font0_us.sheet0.png`, the first of four sheets of the main font.*
+*`font/font0_sheet0.png`, the first of four sheets of the main font.*
 
 ```
-slot,left,right
-0,0,19
-1,2,6
-2,3,8
+slot,drawn_cell,left,right
+0,576,0,19
+1,577,2,6
+2,578,3,8
 ```
 
-*`font0_us.metrics.csv`: a left and a right metric for each glyph slot.*
+*`font0_metrics.csv`: for each glyph slot, the cell it draws and a left and a
+right metric. `font0_bytes.csv` maps each byte to its cell.
+`browse --kinds fonts` writes the same sheets and metrics under `fonts/`, named
+`font0_us.sheet0.png` and `font0_us.metrics.csv`.*
 `font-rebuild` goes the other way, building a font file from edited sheets
 ([MODDING.md](MODDING.md)).
 
@@ -244,7 +247,7 @@ script,sc1410,2,Pitt,Please save my son!,talk.smsg
 
 The full file also has the branch each line sits on (`if@05f0 > case 11@05f6 > ...`),
 so you can tell which lines appear together. There are 8,318 lines from 363
-scripts, plus battle callouts.
+scripts: text boxes, messages, choices, timed event lines and battle callouts.
 
 **3. Movie subtitles and voices.** The 45 cutscenes and 80 real-time events come
 out as `.srt` files, and with `--voice` each timed line is cut from the movie's
@@ -324,8 +327,8 @@ song,mid,ppqn,ticks,sf2,wav,fx,seconds
 ```
 
 Short clips of both are in [`samples/`](samples/) and listed in the
-[front-page audio table](../README.md#audio-samples): five songs, a jingle, two
-sound effects and three voice lines. How the renderer works and how it was
+[front-page audio table](../README.md#audio-samples): five songs, two
+sound effects and three event voice lines. How the renderer works and how it was
 checked is in [MUSIC.md](MUSIC.md), which also says where it still differs from
 the game.
 
@@ -335,9 +338,12 @@ the game.
 python cli.py browse --out out/ --kinds movies
 ```
 
-`.sfd` cutscenes and `.ipu` monitor clips become MP4 (512×448, with their
-stereo audio; `--movie-audio ac3` or `both` keeps the 5.1 track). 796 of the 797
-in my run convert. `s010100`, the opening, runs about eight and a half minutes.
+`.sfd` cutscenes become MP4 at 512×448 with their stereo audio
+(`--movie-audio ac3` or `both` keeps the 5.1 track); the `.ipu` monitor clips
+are smaller (256×224, 128×112, 128×128, one 256×256). The `.adx` audio files
+become WAV. In my run 139 of the 140 movie files converted (50 cutscenes, 89
+monitor clips); the MP4 of `iwase\avitest.ipu` came out empty. `s010100`, the
+opening, runs about eight and a half minutes.
 
 <img src="images/tour/movie_s010100.jpg" width="320" alt="A frame from the opening movie">
 

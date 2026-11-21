@@ -14,8 +14,9 @@ Statuses:
 * ``editable``: exported to the UTF-8 tree and imported back; grows within a
   limit the loader's code gives (banks, menus, subtitles).
 * ``in place``: exported and imported, each string at most its slot.
-* ``export only``: the kit writes a viewable copy (PNG, JPEG, MP4) and has no
-  checked writer for it.
+* ``export only``: the kit writes a viewable copy (PNG, JPEG, MP4) and no
+  text tool writes it back. Pictures that ``texture-import`` writes say so in
+  their note.
 * ``not loaded``: on the disc, but no code of the USA build names it.
 * ``no text``: pictures that were looked at and carry no words (listed so
   that nobody has to look again).
@@ -90,9 +91,12 @@ MEDIA_ROWS: List[Tuple[str, str, Tuple[str, ...], str, str]] = [
      ("yosikawa\\obj01.xtx", "yosikawa\\seg01.xtx", "yosikawa\\g2_0?.xtx", "yosikawa\\ctrl01.xtx",
       "yosikawa\\ctrl_pic.xtx", "yosikawa\\battle01.xtx", "yosikawa\\bg01.xtx", "yosikawa\\font.xtx",
       "yamamoto\\stat\\stat.xtx", "omiya\\talk01.xtx", "omiya\\botan.xtx", "iwase\\img\\door\\door_alpha.xtx"),
-     "export only", "browse writes PNG; recolor rewrites pixels in place (hue), no PNG-to-XTX import"),
+     "export only", "browse writes PNG; recolor rewrites pixels in place (hue); texture-import (checked on disc "
+     "copies, not yet seen in the game) writes the sheets whose palette is solved (parked-corner sheets and their "
+     "frame masks) and refuses edits to sheets drawn with a guessed palette"),
     ("picture", "title menu words (NEW GAME, LOAD, INSTALL, ...)", ("yajima\\titleobj.xtx",), "export only",
-     "ARX-compressed XTX; browse writes PNG"),
+     "ARX-compressed XTX; browse writes PNG; texture-import (checked on disc copies, not yet seen in the game) "
+     "writes it (true colour)"),
     ("picture", "synopsis sheets", ("yajima\\synopsis.bin",), "export only", "a pack of 2 XTX"),
     ("picture", "'The Story So Far' pages (prose drawn into JPEG)", ("yajima\\synopsis\\*.jpg",), "export only",
      "loader FUN_001e92b8; patch can replace a whole file, nothing checks its format or the loader's buffer"),
